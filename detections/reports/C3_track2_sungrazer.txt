@@ -1,0 +1,9 @@
+=== Sungrazer Report Helper ===
+Camera: C3
+Image Size: 1024x1024
+Your (0,0) position: Upper Left
+Date of FIRST IMAGE: 2025-10-27
+Frames (time_utc, x, y):
+  2025-10-27 07:42:00, 768, 893
+  2025-10-27 07:54:00, 768, 892
+  2025-10-27 08:06:00, 769, 892
