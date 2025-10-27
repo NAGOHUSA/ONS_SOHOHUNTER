@@ -1,14 +1,8 @@
 # detector/detect_comets.py
-# End-to-end SOHO comet detector pipeline:
-# - Fetch recent C2/C3 frames (via fetch_lasco.fetch_window)
-# - Stabilize, build static star/hot-pixel mask, motion-diff, link tracks
-# - Radial (occulter/edge) guard
-# - Optional AI classifier stub annotation (ai_classifier.classify_crop_batch)
-# - C2<->C3 correlation by position angle (PA) within time window
-# - Exports: per-candidate TXT/CSV, overlays, thumbnails, latest_status.json,
-#            candidates_<ts>.json, to_submit.json, combined CSV,
-#            ORIGINAL mid-frame copy, and ANNOTATED original with the exact spot.
-
+# SOHO comet detector w/ per-candidate animations:
+# - Copies ORIGINAL mid-frame & writes ANNOTATED original with exact spot
+# - Per-candidate Sungrazer TXT/CSV, overlays, last thumbs
+# - NEW: Per-candidate ANIMATION (GIF if imageio available, else MP4)
 from __future__ import annotations
 
 import os, re, math, csv, json, argparse, pathlib, shutil
@@ -22,7 +16,7 @@ import requests
 
 from fetch_lasco import fetch_window  # must exist in detector/
 
-# ----------------- Config (env) -----------------
+# ---------- Config (env) ----------
 AI_VETO_ENABLED             = os.getenv("AI_VETO_ENABLED", "1") == "1"
 AI_VETO_LABEL               = os.getenv("AI_VETO_LABEL", "not_comet")
 AI_VETO_SCORE_MAX           = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))
@@ -38,7 +32,7 @@ DUAL_CHANNEL_MAX_ANGLE_DIFF = int(os.getenv("DUAL_CHANNEL_MAX_ANGLE_DIFF", "25")
 
 DEBUG_OVERLAYS              = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
-# ----------------- IO helpers -----------------
+# ---------- IO helpers ----------
 def ensure_dir(p: Path) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -46,9 +40,8 @@ def save_png(path: Path, img: np.ndarray) -> None:
     ensure_dir(path)
     cv2.imwrite(str(path), img)
 
-# ----------------- Vis helpers -----------------
+# ---------- Vis helpers ----------
 def draw_tracks_overlay(base_img: np.ndarray, tracks, out_path: Path, radius=3, thickness=1):
-    """Draw tracks on a BGR copy of the grayscale base image."""
     if len(base_img.shape) == 2:
         vis_bgr = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR)
     else:
@@ -68,23 +61,19 @@ def draw_tracks_overlay(base_img: np.ndarray, tracks, out_path: Path, radius=3, 
     save_png(out_path, vis_bgr)
 
 def contact_sheet(images: List[np.ndarray], cols=4, pad=4) -> Optional[np.ndarray]:
-    if not images:
-        return None
+    if not images: return None
     h, w = images[0].shape[:2]
     rows = int(np.ceil(len(images)/cols))
     sheet = np.full((rows*h + (rows+1)*pad, cols*w + (cols+1)*pad), 10, dtype=np.uint8)
-    idx = 0
-    y = pad
+    idx = 0; y = pad
     for _r in range(rows):
         x = pad
         for _c in range(cols):
             if idx < len(images):
                 img = images[idx]
-                if img.shape[:2] != (h, w):
-                    img = cv2.resize(img, (w,h))
+                if img.shape[:2] != (h, w): img = cv2.resize(img, (w,h))
                 sheet[y:y+h, x:x+w] = img
-            x += w + pad
-            idx += 1
+            x += w + pad; idx += 1
         y += h + pad
     return sheet
 
@@ -98,11 +87,9 @@ def save_thumbnail(img: np.ndarray, out_path: Path, max_w=960):
 
 def parse_frame_iso(name: str) -> Optional[str]:
     m = re.search(r'(\d{8})_(\d{4,6})', name)
-    if not m:
-        return None
+    if not m: return None
     d, t = m.groups()
-    if len(t) == 4:
-        t = t + "00"
+    if len(t) == 4: t = t + "00"
     try:
         return f"{d[0:4]}-{d[4:6]}-{d[6:8]}T{t[0:2]}:{t[2:4]}:{t[4:6]}Z"
     except Exception:
@@ -110,7 +97,7 @@ def parse_frame_iso(name: str) -> Optional[str]:
 
 def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
                          hours_back: int, step_min: int, frames: int, tracks, out_path: Path):
-    vis = gray_img.copy() if len(gray_img.shape) == 2 else cv2.cvtColor(gray_img, cv2.COLOR_BGR2GRAY)
+    vis = gray_img if len(gray_img.shape) == 2 else cv2.cvtColor(gray_img, cv2.COLOR_BGR2GRAY)
     vis_bgr = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
     for idx, tr in enumerate(tracks, 1):
         pts = [(int(x), int(y)) for (_,x,y,_) in tr]
@@ -122,71 +109,55 @@ def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
             cv2.putText(vis_bgr, f"#{idx}", (pts[-1][0]+6, pts[-1][1]-6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,215,255), 1, cv2.LINE_AA)
     h, w = vis_bgr.shape[:2]
-    banner_h = 64
     overlay = vis_bgr.copy()
-    cv2.rectangle(overlay, (0,0), (w, banner_h), (12, 22, 45), -1)
+    cv2.rectangle(overlay, (0,0), (w, 64), (12, 22, 45), -1)
     vis_bgr = cv2.addWeighted(overlay, 0.7, vis_bgr, 0.3, 0)
-
     iso = parse_frame_iso(last_name) or ""
-    lines = [
+    y = 22
+    for line in [
         f"SOHO Comet Hunter — {detector}",
         f"Last frame: {last_name}  {iso}",
         f"Window: {hours_back}h  Step: {step_min}m  | Frames: {frames}  Tracks: {len(tracks)}",
-    ]
-    y = 22
-    for line in lines:
+    ]:
         cv2.putText(vis_bgr, line, (12, y), cv2.FONT_HERSHEY_DUPLEX, 0.6, (230,238,252), 1, cv2.LINE_AA)
         y += 20
-
     save_png(out_path, vis_bgr)
 
-# ----------------- Save ORIGINAL & ANNOTATED original -----------------
+# ---------- ORIGINAL & ANNOTATED original ----------
 def save_original_and_annotated(detector_name: str,
                                 mid_name: str,
                                 positions: List[Dict[str, Any]],
                                 out_dir: Path,
                                 highlight_mid: bool = True) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Copies the original mid-frame into detections/originals/ and writes an annotated
-    version into detections/annotated/ with the track drawn and the mid-point highlighted.
-    Returns (original_path_str, annotated_path_str). Either may be None if IO fails.
-    """
     try:
         src = Path("frames") / detector_name / mid_name
-        if not src.exists():
-            return None, None
+        if not src.exists(): return None, None
 
-        # 1) Copy original to detections/originals/
-        originals_dir = out_dir / "originals"
-        originals_dir.mkdir(parents=True, exist_ok=True)
+        originals_dir = out_dir / "originals"; originals_dir.mkdir(parents=True, exist_ok=True)
         orig_dst = originals_dir / f"{detector_name}_{mid_name}"
-        if not orig_dst.exists():
-            shutil.copyfile(src, orig_dst)
+        if not orig_dst.exists(): shutil.copyfile(src, orig_dst)
 
-        # 2) Load original and draw annotation
         img = cv2.imread(str(src), cv2.IMREAD_COLOR)
-        if img is None:
-            return str(orig_dst), None
+        if img is None: return str(orig_dst), None
 
         pts = [(int(round(p["x"])), int(round(p["y"]))) for p in positions if "x" in p and "y" in p]
         for i in range(1, len(pts)):
-            cv2.line(img, pts[i-1], pts[i], (0, 255, 255), 2, cv2.LINE_AA)
+            cv2.line(img, pts[i-1], pts[i], (0,255,255), 2, cv2.LINE_AA)
         for p in pts:
-            cv2.circle(img, p, 3, (0, 255, 255), -1, cv2.LINE_AA)
+            cv2.circle(img, p, 3, (0,255,255), -1, cv2.LINE_AA)
 
         if highlight_mid and pts:
             mid_i = len(pts) // 2
-            cv2.circle(img, pts[mid_i], 8, (0, 180, 0), 2, cv2.LINE_AA)
-            cv2.circle(img, pts[mid_i], 2, (0, 255, 0), -1, cv2.LINE_AA)
+            cv2.circle(img, pts[mid_i], 8, (0,180,0), 2, cv2.LINE_AA)
+            cv2.circle(img, pts[mid_i], 2, (0,255,0), -1, cv2.LINE_AA)
             cv2.putText(img, "candidate", (pts[mid_i][0] + 10, pts[mid_i][1] - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 0), 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,220,0), 1, cv2.LINE_AA)
 
-        label = f"{detector_name}  {mid_name}"
-        cv2.rectangle(img, (8, 8), (8 + 8*len(label), 36), (12, 22, 45), -1)
-        cv2.putText(img, label, (14, 30), cv2.FONT_HERSHEY_DUPLEX, 0.55, (230, 238, 252), 1, cv2.LINE_AA)
+        cv2.rectangle(img, (8,8), (8 + 8*len(f"{detector_name}  {mid_name}"), 36), (12,22,45), -1)
+        cv2.putText(img, f"{detector_name}  {mid_name}", (14,30),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.55, (230,238,252), 1, cv2.LINE_AA)
 
-        ann_dir = out_dir / "annotated"
-        ann_dir.mkdir(parents=True, exist_ok=True)
+        ann_dir = out_dir / "annotated"; ann_dir.mkdir(parents=True, exist_ok=True)
         ann_path = ann_dir / f"{detector_name}_{mid_name}_annot_track.png"
         cv2.imwrite(str(ann_path), img)
 
@@ -194,17 +165,14 @@ def save_original_and_annotated(detector_name: str,
     except Exception:
         return None, None
 
-# ----------------- Data loading & stabilization -----------------
+# ---------- Data loading & stabilization ----------
 def load_series(folder: pathlib.Path) -> List[Tuple[str, np.ndarray]]:
     pairs: List[Tuple[str, np.ndarray]] = []
-    if not folder.exists():
-        return pairs
+    if not folder.exists(): return pairs
     for p in sorted(folder.glob("*.*")):
-        if p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-            continue
+        if p.suffix.lower() not in (".png", ".jpg", ".jpeg"): continue
         im = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
-        if im is not None:
-            pairs.append((p.name, im))
+        if im is not None: pairs.append((p.name, im))
     return pairs
 
 def stabilize(base: np.ndarray, img: np.ndarray) -> np.ndarray:
@@ -220,7 +188,7 @@ def stabilize(base: np.ndarray, img: np.ndarray) -> np.ndarray:
     except cv2.error:
         return img
 
-# ----------------- Static mask (stars/hot pixels) -----------------
+# ---------- Static mask ----------
 def build_static_mask(images: List[np.ndarray], ksize=5, thresh=10) -> np.ndarray:
     if len(images) < 3:
         return np.zeros_like(images[0], dtype=np.uint8)
@@ -231,12 +199,11 @@ def build_static_mask(images: List[np.ndarray], ksize=5, thresh=10) -> np.ndarra
     mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, np.ones((3,3), np.uint8), iterations=1)
     return mask
 
-# ----------------- Motion detection & tracking -----------------
+# ---------- Motion & tracking ----------
 def find_moving_points(series: List[Tuple[str, np.ndarray]], static_mask=None) -> List[Tuple[int, float, float, float]]:
     pts: List[Tuple[int, float, float, float]] = []
     for i in range(1, len(series)):
-        _, a = series[i-1]
-        _, b = series[i]
+        _, a = series[i-1]; _, b = series[i]
         diff = cv2.absdiff(b, a)
         if static_mask is not None:
             diff = cv2.bitwise_and(diff, cv2.bitwise_not(static_mask))
@@ -288,10 +255,9 @@ def crop_along_track(img: np.ndarray, tr, pad=16) -> np.ndarray:
     x_max = int(min(img.shape[1], max(x0,x1)+pad)); y_max = int(min(img.shape[0], max(y0,y1)+pad))
     return img[y_min:y_max, x_min:x_max]
 
-# ----------------- AI classifier (optional) -----------------
+# ---------- AI classifier (optional) ----------
 def maybe_classify_with_ai(hits: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
-    if os.getenv("USE_AI_CLASSIFIER", "0") != "1":
-        return hits
+    if os.getenv("USE_AI_CLASSIFIER", "0") != "1": return hits
     try:
         from ai_classifier import classify_crop_batch
     except Exception:
@@ -303,7 +269,7 @@ def maybe_classify_with_ai(hits: List[Dict[str,Any]]) -> List[Dict[str,Any]]:
         h["ai_label"] = s.get("label", "unknown")
     return hits
 
-# ----------------- Guards -----------------
+# ---------- Guards ----------
 def radial_guard_ok(x: float, y: float, w: int, h: int, r_min_frac: float, r_max_frac: float) -> bool:
     cx, cy = w/2.0, h/2.0
     r = math.hypot(x-cx, y-cy)
@@ -311,7 +277,7 @@ def radial_guard_ok(x: float, y: float, w: int, h: int, r_min_frac: float, r_max
     rfrac = r / max(1e-6, rmax)
     return (r_min_frac <= rfrac <= r_max_frac)
 
-# ----------------- Sungrazer exports per track -----------------
+# ---------- Sungrazer exports per track ----------
 def write_sungrazer_exports(detector_name: str, track_idx: int, positions: List[Dict[str,Any]],
                             image_size: Tuple[int,int], out_dir: Path) -> Tuple[str,str]:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -328,10 +294,9 @@ def write_sungrazer_exports(detector_name: str, track_idx: int, positions: List[
     for p in positions:
         t = (p["time_utc"] or "").replace("T"," ").replace("Z","")
         lines.append(f"  {t}, {int(round(p['x']))}, {int(round(p['y']))}")
-    txt = "\n".join(lines) + "\n"
     txt_path = out_dir / f"{detector_name}_track{track_idx}_sungrazer.txt"
     with open(txt_path, "w") as f:
-        f.write(txt)
+        f.write("\n".join(lines) + "\n")
 
     csv_path = out_dir / f"{detector_name}_track{track_idx}_sungrazer.csv"
     with open(csv_path, "w") as f:
@@ -340,7 +305,93 @@ def write_sungrazer_exports(detector_name: str, track_idx: int, positions: List[
             f.write(f"{p['time_utc']},{int(round(p['x']))},{int(round(p['y']))}\n")
     return str(txt_path), str(csv_path)
 
-# ----------------- Detector pipeline (per C2/C3) -----------------
+# ---------- NEW: per-candidate animation ----------
+def write_animation_for_track(detector_name: str,
+                              names: List[str],
+                              images: List[np.ndarray],
+                              tr,  # list of (t,x,y,a) with t=index into names/images
+                              out_dir: Path,
+                              fps: int = 6,
+                              circle_radius: int = 4) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Create an animation that steps through frames from tr[0].t to tr[-1].t.
+    Annotates the current point and the trail so far. Returns (gif_path, mp4_path).
+    GIF requires imageio; if not available we return None for GIF and write MP4 via cv2.
+    """
+    try:
+        t_min = tr[0][0]; t_max = tr[-1][0]
+        frames_bgr: List[np.ndarray] = []
+        trail_pts: List[Tuple[int,int]] = []
+
+        # Map t->(x,y)
+        xy_by_t = {t:(int(round(x)), int(round(y))) for (t,x,y,_) in tr}
+
+        for ti in range(t_min, t_max + 1):
+            frame = images[ti]
+            if len(frame.shape) == 2: bgr = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            else: bgr = frame.copy()
+
+            # extend trail if we have xy at this ti
+            if ti in xy_by_t:
+                trail_pts.append(xy_by_t[ti])
+
+            # draw trail so far
+            for i in range(1, len(trail_pts)):
+                cv2.line(bgr, trail_pts[i-1], trail_pts[i], (0, 255, 255), 2, cv2.LINE_AA)
+            for p in trail_pts:
+                cv2.circle(bgr, p, circle_radius, (0, 255, 255), -1, cv2.LINE_AA)
+
+            # emphasize current point
+            if ti in xy_by_t:
+                p = xy_by_t[ti]
+                cv2.circle(bgr, p, 8, (0, 180, 0), 2, cv2.LINE_AA)
+                cv2.circle(bgr, p, 2, (0, 255, 0), -1, cv2.LINE_AA)
+
+            # caption
+            label = f"{detector_name}  {names[ti]}"
+            cv2.rectangle(bgr, (8, 8), (8 + 8*len(label), 36), (12, 22, 45), -1)
+            cv2.putText(bgr, label, (14, 30), cv2.FONT_HERSHEY_DUPLEX, 0.55, (230,238,252), 1, cv2.LINE_AA)
+
+            frames_bgr.append(bgr)
+
+        anim_dir = out_dir / "animations"; anim_dir.mkdir(parents=True, exist_ok=True)
+        base = f"{detector_name}_{names[(t_min+t_max)//2]}_track{tr.index(tr[-1])+1}"  # stable-ish base
+        # safer base name using track index from caller; we will override from caller anyway
+        gif_path = anim_dir / f"{detector_name}_{names[(t_min+t_max)//2]}_anim.gif"
+        mp4_path = anim_dir / f"{detector_name}_{names[(t_min+t_max)//2]}_anim.mp4"
+
+        gif_written = False
+        # Try GIF
+        try:
+            import imageio.v2 as imageio
+            gif_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames_bgr]
+            imageio.mimsave(str(gif_path), gif_frames, duration=max(0.02, 1.0/float(max(1,fps))), loop=0)
+            gif_written = True
+        except Exception:
+            gif_written = False
+
+        # Always try MP4 too (good for browsers, small)
+        try:
+            h, w = frames_bgr[0].shape[:2]
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            vw = cv2.VideoWriter(str(mp4_path), fourcc, fps, (w, h))
+            for f in frames_bgr:
+                vw.write(f)
+            vw.release()
+            mp4_ok = True
+        except Exception:
+            mp4_ok = False
+            mp4_path = None
+
+        if not gif_written:
+            gif_path = None
+
+        return (str(gif_path) if gif_path else None,
+                str(mp4_path) if mp4_path else None)
+    except Exception:
+        return None, None
+
+# ---------- Detector pipeline (per C2/C3) ----------
 def process_detector(detector_name: str, out_dir: Path,
                      debug: bool=False, hours_back: int=6, step_min: int=12):
     folder = Path("frames") / detector_name
@@ -380,23 +431,29 @@ def process_detector(detector_name: str, out_dir: Path,
         mid_name, mid_img = aligned[len(aligned)//2]
 
         for i, tr in enumerate(tracks):
+            # positions with timestamps
             positions: List[Dict[str,Any]] = []
             for (t_idx, x, y, _a) in tr:
                 fname = names[t_idx]
                 iso = parse_frame_iso(fname) or ""
                 positions.append({"frame": fname, "time_utc": iso, "x": float(x), "y": float(y)})
 
+            # crop from mid frame for the card
             crop = crop_along_track(mid_img, tr)
-            if crop.size == 0:
-                continue
+            if crop.size == 0: continue
             crop_path = out_dir / f"{detector_name}_{mid_name}_track{i+1}.png"
             save_png(crop_path, crop)
 
-            # per-candidate Sungrazer TXT/CSV
+            # Sungrazer per-track files
             write_sungrazer_exports(detector_name, i+1, positions, image_size=(w,h), out_dir=out_dir / "reports")
 
-            # NEW: save original mid-frame copy + annotated original with exact spot
+            # Originals & annotated originals
             orig_path, ann_path = save_original_and_annotated(detector_name, mid_name, positions, out_dir)
+
+            # Animation (GIF preferred, MP4 fallback)
+            gif_path, mp4_path = write_animation_for_track(
+                detector_name, names, images, tr, out_dir, fps=6, circle_radius=4
+            )
 
             hits.append({
                 "detector": detector_name,
@@ -406,8 +463,10 @@ def process_detector(detector_name: str, out_dir: Path,
                 "positions": positions,
                 "image_size": [int(w), int(h)],
                 "origin": "upper_left",
-                "original_mid_path": orig_path,      # new
-                "annotated_mid_path": ann_path       # new
+                "original_mid_path": orig_path,
+                "annotated_mid_path": ann_path,
+                "animation_gif_path": gif_path,
+                "animation_mp4_path": mp4_path
             })
 
         if DEBUG_OVERLAYS:
@@ -425,88 +484,68 @@ def process_detector(detector_name: str, out_dir: Path,
         "last_frame_size": [int(lw), int(lh)]
     }
 
-# ----------------- Cross-detector correlation -----------------
+# ---------- Cross-detector correlation ----------
 def pa_of_track_from_positions(positions: List[Dict[str,Any]], w: int, h: int) -> Optional[float]:
-    if not positions or len(positions) < 2:
-        return None
+    if not positions or len(positions) < 2: return None
     x0, y0 = positions[0]["x"], positions[0]["y"]
     x1, y1 = positions[-1]["x"], positions[-1]["y"]
     cx, cy = w/2.0, h/2.0
     vx, vy = (x1-cx)-(x0-cx), (y1-cy)-(y0-cy)
-    ang = (math.degrees(math.atan2(-vx, -vy)) + 360.0) % 360.0  # PA: 0 up, CW
+    ang = (math.degrees(math.atan2(-vx, -vy)) + 360.0) % 360.0
     return ang
 
 def correlate_c2_c3(hits_c2: List[Dict[str,Any]], hits_c3: List[Dict[str,Any]]) -> None:
-    """Annotate likely C2↔C3 matches by similar PA within time window."""
     def first_time(h: Dict[str,Any]) -> str:
         return (h.get("positions") or [{}])[0].get("time_utc", "")
-
     def parse_t(s: str) -> Optional[datetime]:
-        try:
-            return datetime.strptime(s.replace("Z",""), "%Y-%m-%dT%H:%M:%S")
-        except Exception:
-            return None
+        try: return datetime.strptime(s.replace("Z",""), "%Y-%m-%dT%H:%M:%S")
+        except Exception: return None
 
-    # C2 -> C3
     for hc2 in hits_c2:
-        t2 = parse_t(first_time(hc2))
-        if not t2:
-            continue
+        t2 = parse_t(first_time(hc2)); if_not = (t2 is None)
+        if if_not: continue
         w2, h2 = hc2["image_size"]
         pa2 = pa_of_track_from_positions(hc2.get("positions", []), w2, h2)
-        best = None
-        best_hit = None
+        best = None; best_hit = None
         for hc3 in hits_c3:
             t3 = parse_t(first_time(hc3))
-            if not t3:
-                continue
+            if not t3: continue
             dt_min = abs((t3 - t2).total_seconds()) / 60.0
-            if dt_min > DUAL_CHANNEL_MAX_MINUTES:
-                continue
+            if dt_min > DUAL_CHANNEL_MAX_MINUTES: continue
             w3, h3 = hc3["image_size"]
             pa3 = pa_of_track_from_positions(hc3.get("positions", []), w3, h3)
-            if pa2 is None or pa3 is None:
-                continue
+            if pa2 is None or pa3 is None: continue
             diff = min(abs(pa2 - pa3), 360 - abs(pa2 - pa3))
             if diff <= DUAL_CHANNEL_MAX_ANGLE_DIFF:
                 if best is None or diff < best:
-                    best = diff
-                    best_hit = hc3
+                    best = diff; best_hit = hc3
         if best_hit is not None and best is not None:
             hc2["dual_channel_match"] = {"with": f"C3#{best_hit['track_index']}", "pa_diff_deg": round(best, 1)}
 
-    # C3 -> C2
     for hc3 in hits_c3:
         t3 = parse_t(first_time(hc3))
-        if not t3:
-            continue
+        if not t3: continue
         w3, h3 = hc3["image_size"]
         pa3 = pa_of_track_from_positions(hc3.get("positions", []), w3, h3)
-        best = None
-        best_hit = None
+        best = None; best_hit = None
         for hc2 in hits_c2:
             t2 = parse_t(first_time(hc2))
-            if not t2:
-                continue
+            if not t2: continue
             dt_min = abs((t3 - t2).total_seconds()) / 60.0
-            if dt_min > DUAL_CHANNEL_MAX_MINUTES:
-                continue
+            if dt_min > DUAL_CHANNEL_MAX_MINUTES: continue
             w2, h2 = hc2["image_size"]
             pa2 = pa_of_track_from_positions(hc2.get("positions", []), w2, h2)
-            if pa2 is None or pa3 is None:
-                continue
+            if pa2 is None or pa3 is None: continue
             diff = min(abs(pa2 - pa3), 360 - abs(pa2 - pa3))
             if diff <= DUAL_CHANNEL_MAX_ANGLE_DIFF:
                 if best is None or diff < best:
-                    best = diff
-                    best_hit = hc2
+                    best = diff; best_hit = hc2
         if best_hit is not None and best is not None:
             hc3["dual_channel_match"] = {"with": f"C2#{best_hit['track_index']}", "pa_diff_deg": round(best, 1)}
 
-# ----------------- Webhook -----------------
+# ---------- Webhook ----------
 def send_webhook(summary: Dict[str,Any], hits: List[Dict[str,Any]]) -> None:
-    if not ALERT_WEBHOOK_URL:
-        return
+    if not ALERT_WEBHOOK_URL: return
     try:
         payload = {
             "timestamp_utc": summary.get("timestamp_utc"),
@@ -528,23 +567,20 @@ def send_webhook(summary: Dict[str,Any], hits: List[Dict[str,Any]]) -> None:
     except Exception:
         pass
 
-# ----------------- Combined CSV (backend) -----------------
+# ---------- Combined CSV ----------
 def write_combined_csv(out_dir: Path, run_ts: str, hits: List[Dict[str,Any]]) -> str:
-    reports_dir = out_dir / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir = out_dir / "reports"; reports_dir.mkdir(parents=True, exist_ok=True)
     csv_path = reports_dir / f"report_{run_ts}_combined.csv"
     header = ["detector","track_index","series_mid_frame","frame_time_utc","x","y",
               "image_width","image_height","origin","ai_label","ai_score",
               "dual_channel_with","dual_channel_pa_diff_deg","vetoed","auto_selected",
-              "original_mid_path","annotated_mid_path"]
+              "original_mid_path","annotated_mid_path","animation_gif_path","animation_mp4_path"]
     with open(csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(header)
+        w = csv.writer(f); w.writerow(header)
         for h in hits:
             det = (h.get("detector") or "").upper()
             w_img,h_img = (h.get("image_size") or [None,None])
-            ai_label = h.get("ai_label")
-            ai_score = h.get("ai_score")
+            ai_label = h.get("ai_label"); ai_score = h.get("ai_score")
             dual = h.get("dual_channel_match") or {}
             for p in (h.get("positions") or []):
                 w.writerow([
@@ -554,11 +590,12 @@ def write_combined_csv(out_dir: Path, run_ts: str, hits: List[Dict[str,Any]]) ->
                     ai_label, ai_score,
                     dual.get("with"), dual.get("pa_diff_deg"),
                     h.get("vetoed") is True, h.get("auto_selected") is True,
-                    h.get("original_mid_path"), h.get("annotated_mid_path")
+                    h.get("original_mid_path"), h.get("annotated_mid_path"),
+                    h.get("animation_gif_path"), h.get("animation_mp4_path")
                 ])
     return str(csv_path)
 
-# ----------------- Main -----------------
+# ---------- Main ----------
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=6)
@@ -568,31 +605,26 @@ def main():
 
     fetched = fetch_window(hours_back=args.hours, step_min=args.step_min, root="frames")
     print(f"Fetched {len(fetched)} new frames.")
-    for p in fetched:
-        print(f" - {p}")
+    for p in fetched: print(f" - {p}")
 
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out); out_dir.mkdir(parents=True, exist_ok=True)
 
     detectors_stats: Dict[str,Any] = {}
     errors: List[str] = []
     results: Dict[str, List[Dict[str,Any]]] = {"C2": [], "C3": []}
 
-    # Run detectors
     for det in ["C2", "C3"]:
         try:
             hits, stats = process_detector(det, out_dir, debug=DEBUG_OVERLAYS,
                                            hours_back=args.hours, step_min=args.step_min)
             for h in hits:
                 h["timestamp_utc"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-            results[det] = hits
-            detectors_stats[det] = stats
+            results[det] = hits; detectors_stats[det] = stats
         except Exception as e:
             print(f"[ERROR] {det} failed: {e}")
             detectors_stats[det] = {"frames":0,"tracks":0,"last_frame_name":"","last_frame_iso":"","last_frame_size":[0,0]}
             errors.append(f"{det}: {repr(e)}")
 
-    # AI annotate & soft veto
     for det in ["C2","C3"]:
         results[det] = maybe_classify_with_ai(results.get(det, []))
         if AI_VETO_ENABLED:
@@ -605,19 +637,14 @@ def main():
                 kept.append(h)
             results[det] = kept
 
-    # Dual-channel correlation
     correlate_c2_c3(results.get("C2", []), results.get("C3", []))
 
-    # Auto shortlist
     to_submit: List[Dict[str,Any]] = []
     for det in ["C2","C3"]:
         cands = results.get(det, [])
         cands_sorted = sorted(
             cands,
-            key=lambda h: (
-                float(h.get("ai_score") or 0.0),
-                h.get("dual_channel_match") is not None
-            ),
+            key=lambda h: (float(h.get("ai_score") or 0.0), h.get("dual_channel_match") is not None),
             reverse=True
         )
         chosen = [h for h in cands_sorted if not h.get("vetoed")][:SELECT_TOP_N_FOR_SUBMIT]
@@ -630,10 +657,8 @@ def main():
                 "crop_path": h["crop_path"]
             })
 
-    # Flatten
     all_hits: List[Dict[str,Any]] = results.get("C2", []) + results.get("C3", [])
 
-    # Summary & status
     ts_iso = datetime.utcnow().isoformat(timespec="seconds") + "Z"
     summary = {
         "timestamp_utc": ts_iso,
@@ -645,34 +670,27 @@ def main():
         "auto_selected_count": len(to_submit),
     }
 
-    # Write status
     with open(out_dir / "latest_status.json", "w") as f:
         json.dump({**summary, "candidates_in_report": len(all_hits)}, f, indent=2)
     print(f"Wrote status: {out_dir/'latest_status.json'}")
 
-    # Write candidates json
     if all_hits:
         ts_name = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         out_json = out_dir / f"candidates_{ts_name}.json"
-        with open(out_json, "w") as f:
-            json.dump(all_hits, f, indent=2)
+        with open(out_json, "w") as f: json.dump(all_hits, f, indent=2)
         print(f"Wrote {out_json}")
 
-        # Combined CSV for the whole run
         combined_csv = write_combined_csv(out_dir, ts_name, all_hits)
         print(f"Wrote combined CSV: {combined_csv}")
     else:
         print("No candidates this run.")
 
-    # to_submit.json (auto shortlist)
     with open(out_dir / "to_submit.json", "w") as f:
         json.dump({"auto_selected": to_submit, "timestamp_utc": summary["timestamp_utc"]}, f, indent=2)
     print(f"Wrote {out_dir/'to_submit.json'}")
 
-    # Optional webhook
     non_vetoed = [h for h in all_hits if not h.get("vetoed")]
-    if non_vetoed:
-        send_webhook(summary, non_vetoed)
+    if non_vetoed: send_webhook(summary, non_vetoed)
 
 if __name__ == "__main__":
     main()
