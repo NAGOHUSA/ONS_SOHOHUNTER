@@ -1,0 +1,18 @@
+{
+  "timestamp_utc": "2025-10-27T13:37:59Z",
+  "hours_back": 6,
+  "step_min": 12,
+  "detectors": {
+    "C2": {
+      "frames": 0,
+      "tracks": 0
+    },
+    "C3": {
+      "frames": 0,
+      "tracks": 0
+    }
+  },
+  "fetched_new_frames": 0,
+  "errors": [],
+  "candidates_in_report": 0
+}
