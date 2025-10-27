@@ -1,11 +1,11 @@
 {
-  "timestamp_utc": "2025-10-27T16:19:39Z",
+  "timestamp_utc": "2025-10-27T17:09:32Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {
     "C2": {
       "frames": 30,
-      "tracks": 5,
+      "tracks": 8,
       "last_frame_name": "C2_20251027_0848_c2_1024.jpg",
       "last_frame_iso": "2025-10-27T08:48:00Z",
       "last_frame_size": [
@@ -15,7 +15,7 @@
     },
     "C3": {
       "frames": 30,
-      "tracks": 5,
+      "tracks": 8,
       "last_frame_name": "C3_20251027_0854_c3_1024.jpg",
       "last_frame_iso": "2025-10-27T08:54:00Z",
       "last_frame_size": [
@@ -26,5 +26,6 @@
   },
   "fetched_new_frames": 60,
   "errors": [],
-  "candidates_in_report": 10
+  "auto_selected_count": 6,
+  "candidates_in_report": 16
 }
