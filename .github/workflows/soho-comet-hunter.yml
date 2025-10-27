@@ -11,6 +11,7 @@ permissions:
 jobs:
   hunt:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -26,12 +27,9 @@ jobs:
 
       - name: Run detector (with debug overlays)
         env:
-          # Optional AI second-stage (leave unset to skip)
           USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Optional Slack/Discord webhook
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-          # Always produce overlays + status JSON
           DETECTOR_DEBUG: "1"
         run: |
           python detector/detect_comets.py \
@@ -51,9 +49,17 @@ jobs:
           retention-days: 3
 
       - name: Commit results, overlays, and status
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           if [ -n "$(git status --porcelain detections)" ]; then
+            ts="$(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "Committing new results for ${ts}"
             git add detections
-            git commit -m "Detector status & outputs: $(date -u
+            git commit -m "Detector status & outputs: ${ts}"
+            git push
+          else
+            echo "Nothing new to commit (but artifact uploaded)."
+          fi
