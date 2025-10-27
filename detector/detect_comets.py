@@ -2,9 +2,21 @@
 import cv2, json, os, math, pathlib, argparse, numpy as np
 from datetime import datetime
 from typing import List, Tuple
-from fetch_lasco import fetch_window
 from pathlib import Path
-import re
+import re, requests
+
+from fetch_lasco import fetch_window  # unchanged
+
+# ---- Config via env ----
+AI_VETO_ENABLED = os.getenv("AI_VETO_ENABLED", "1") == "1"
+AI_VETO_LABEL   = os.getenv("AI_VETO_LABEL", "not_comet")  # if classifier returns this, we down-rank/skip
+AI_VETO_SCORE_MAX = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))  # if not_comet score > this -> veto
+ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+SELECT_TOP_N_FOR_SUBMIT = int(os.getenv("SELECT_TOP_N_FOR_SUBMIT", "3"))  # auto-mark N best per detector
+OCCULTER_RADIUS_FRACTION = float(os.getenv("OCCULTER_RADIUS_FRACTION", "0.18"))  # exclude points near inner disk
+MAX_EDGE_RADIUS_FRACTION = float(os.getenv("MAX_EDGE_RADIUS_FRACTION", "0.98"))  # exclude too close to border
+DUAL_CHANNEL_MAX_MINUTES = int(os.getenv("DUAL_CHANNEL_MAX_MINUTES", "60"))  # allow time separation C2<->C3
+DUAL_CHANNEL_MAX_ANGLE_DIFF = int(os.getenv("DUAL_CHANNEL_MAX_ANGLE_DIFF", "25"))  # deg difference allowed in PA
 
 # ---------- helpers ----------
 def draw_tracks_overlay(base_img: np.ndarray, tracks, out_path: Path, radius=3, thickness=1):
@@ -115,12 +127,26 @@ def stabilize(base: np.ndarray, img: np.ndarray) -> np.ndarray:
     except cv2.error:
         return img
 
-def find_moving_points(series: List[Tuple[str, np.ndarray]]) -> List[Tuple[int, float, float, float]]:
+# ---- NEW: static hot-pixel/star mask (rolling median) ----
+def build_static_mask(images: List[np.ndarray], ksize=5, thresh=10):
+    if len(images) < 3:  # not enough to median
+        return np.zeros_like(images[0], dtype=np.uint8)
+    stack = np.stack(images, axis=0)
+    med = np.median(stack, axis=0).astype(np.uint8)
+    blur = cv2.GaussianBlur(med, (ksize,ksize), 0)
+    # threshold for bright static features (stars/hot pixels)
+    _, mask = cv2.threshold(blur, np.median(blur)+thresh, 255, cv2.THRESH_BINARY)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, np.ones((3,3), np.uint8), iterations=1)
+    return mask
+
+def find_moving_points(series: List[Tuple[str, np.ndarray]], static_mask=None) -> List[Tuple[int, float, float, float]]:
     pts = []
     for i in range(1, len(series)):
         _, a = series[i-1]
         _, b = series[i]
         diff = cv2.absdiff(b, a)
+        if static_mask is not None:
+            diff = cv2.bitwise_and(diff, cv2.bitwise_not(static_mask))
         blur = cv2.GaussianBlur(diff, (5,5), 0)
         thr = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
                                     cv2.THRESH_BINARY, 31, -5)
@@ -183,28 +209,25 @@ def maybe_classify_with_ai(hits: list[dict]) -> list[dict]:
         h["ai_label"] = s.get("label", "unknown")
     return hits
 
-# ---------- NEW: writer for Sungrazer exports ----------
+# ---- NEW: radial/edge guard (avoid occulter & frame edge) ----
+def radial_guard_ok(x, y, w, h, r_min_frac, r_max_frac):
+    cx, cy = w/2.0, h/2.0
+    r = math.hypot(x-cx, y-cy)
+    rmax = min(cx, cy)
+    rfrac = r / rmax
+    return (r_min_frac <= rfrac <= r_max_frac)
+
+# ---- NEW: per-detector pipeline that returns tracks + exports ----
 def write_sungrazer_exports(detector_name: str, track_idx: int, positions: list[dict], image_size, out_dir: pathlib.Path):
-    """
-    positions: list of {frame, time_utc, x, y}
-    Writes:
-      - detections/reports/<detector>_track<idx>_sungrazer.txt (paste into form)
-      - detections/reports/<detector>_track<idx>_sungrazer.csv (Frame Time, X, Y)
-    """
     out_dir.mkdir(parents=True, exist_ok=True)
     first = positions[0] if positions else {}
     date_first = (first.get("time_utc","") or "").split("T")[0]
-    camera = detector_name
     img_w, img_h = image_size
-    # Our coordinates are OpenCV pixel coords with origin at top-left (UL).
-    origin = "Upper Left"
-
-    # TXT (human/pasteable)
     lines = []
     lines.append("=== Sungrazer Report Helper ===")
-    lines.append(f"Camera: {camera}")
+    lines.append(f"Camera: {detector_name}")
     lines.append(f"Image Size: {img_w}x{img_h}")
-    lines.append(f"Your (0,0) position: {origin}")
+    lines.append("Your (0,0) position: Upper Left")
     lines.append(f"Date of FIRST IMAGE: {date_first}")
     lines.append("Frames (time_utc, x, y):")
     for p in positions:
@@ -212,10 +235,8 @@ def write_sungrazer_exports(detector_name: str, track_idx: int, positions: list[
         lines.append(f"  {t}, {int(round(p['x']))}, {int(round(p['y']))}")
     txt = "\n".join(lines) + "\n"
     txt_path = out_dir / f"{detector_name}_track{track_idx}_sungrazer.txt"
-    with open(txt_path, "w") as f:
-        f.write(txt)
+    with open(txt_path, "w") as f: f.write(txt)
 
-    # CSV
     csv_path = out_dir / f"{detector_name}_track{track_idx}_sungrazer.csv"
     with open(csv_path, "w") as f:
         f.write("frame_time_utc,x,y\n")
@@ -237,43 +258,48 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
         make_annotated_thumb(last_img, detector_name, last_name, hours_back, step_min, len(series), [], out_dir / f"lastthumb_{detector_name}.png")
 
     tracks = []
-    exports = []   # NEW: list of export files for UI
+    exports = []
     if len(series) >= 4:
         base = series[0][1]
         aligned = [(series[0][0], base)]
         for name, im in series[1:]:
             aligned.append((name, stabilize(base, im)))
 
-        pts = find_moving_points(aligned)
-        tracks = link_tracks(pts, min_len=3)
-        if tracks:
-            tracks = sorted(tracks, key=score_track, reverse=True)[:5]
-
-        # Build positions per track mapped back to frame names/times
         names = [name for name,_ in aligned]
         images = [img for _,img in aligned]
-        mid_name, mid_img = aligned[len(aligned)//2]
 
-        for i, tr in enumerate(tracks):
-            # positions array
+        # Static mask to suppress stars/hot pixels
+        static_mask = build_static_mask(images[-min(8, len(images)):])
+
+        pts_all = find_moving_points(aligned, static_mask=static_mask)
+        # Edge/occulter guard
+        w, h = images[0].shape[1], images[0].shape[0]
+        guarded = []
+        for (t,x,y,a) in pts_all:
+            if radial_guard_ok(x,y,w,h, OCCULTER_RADIUS_FRACTION, MAX_EDGE_RADIUS_FRACTION):
+                guarded.append((t,x,y,a))
+
+        tracks = link_tracks(guarded, min_len=3)
+        if tracks:
+            tracks = sorted(tracks, key=score_track, reverse=True)[:8]
+
+        mid_name, mid_img = aligned[len(aligned)//2]
+        for i,tr in enumerate(tracks):
             positions = []
             for (t_idx, x, y, _a) in tr:
-                fname = names[t_idx]          # t_idx indexes aligned list
+                fname = names[t_idx]
                 iso = parse_frame_iso(fname) or ""
                 positions.append({"frame": fname, "time_utc": iso, "x": float(x), "y": float(y)})
 
             crop = crop_along_track(mid_img, tr)
             if crop.size == 0:
                 continue
-            det_dir = out_dir
-            det_dir.mkdir(parents=True, exist_ok=True)
+            det_dir = out_dir; det_dir.mkdir(parents=True, exist_ok=True)
             crop_path = det_dir / f"{detector_name}_{mid_name}_track{i+1}.png"
             cv2.imwrite(str(crop_path), crop)
 
-            # NEW: write Sungrazer helper files
             txt_path, csv_path = write_sungrazer_exports(
-                detector_name, i+1, positions, image_size=(images[0].shape[1], images[0].shape[0]),
-                out_dir=out_dir / "reports"
+                detector_name, i+1, positions, image_size=(w,h), out_dir=out_dir / "reports"
             )
             exports.append({"txt": txt_path, "csv": csv_path})
 
@@ -282,9 +308,8 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
                 "series_mid_frame": mid_name,
                 "track_index": i+1,
                 "crop_path": str(crop_path),
-                # NEW: include positions + metadata for the web UI
                 "positions": positions,
-                "image_size": [int(images[0].shape[1]), int(images[0].shape[0])],
+                "image_size": [int(w), int(h)],
                 "origin": "upper_left"
             })
 
@@ -303,6 +328,86 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
         "last_frame_size": [int(w), int(h)]
     }
 
+# ---- NEW: simple cross-detector (C2<->C3) sanity check
+def pa_of_track(tr, w, h):
+    (_, x0,y0,_), (_, x1,y1,_) = tr[0], tr[-1]
+    cx, cy = w/2.0, h/2.0
+    vx, vy = (x1-cx)-(x0-cx), (y1-cy)-(y0-cy)
+    ang = (math.degrees(math.atan2(-vx, -vy)) + 360.0) % 360.0  # PA: 0 up, inc CW
+    return ang
+
+def correlate_c2_c3(hits_c2, hits_c3):
+    # annotate likely matches by similar position angle (PA) within time window
+    def first_time(h):
+        return (h.get("positions") or [{}])[0].get("time_utc","")
+    def parse_t(s):
+        try:
+            return datetime.strptime(s.replace("Z",""), "%Y-%m-%dT%H:%M:%S")
+        except: return None
+
+    for hc2 in hits_c2:
+        t2 = parse_t(first_time(hc2))
+        if not t2: continue
+        w,h = hc2["image_size"]
+        pa2 = pa_of_track([(0,p["x"],p["y"],0) for p in hc2["positions"]], w,h) if hc2.get("positions") else None
+        best=None; bd=None
+        for hc3 in hits_c3:
+            t3 = parse_t(first_time(hc3)); if not t3: continue
+            dt = abs((t3 - t2).total_seconds())/60.0
+            if dt > DUAL_CHANNEL_MAX_MINUTES: continue
+            w3,h3 = hc3["image_size"]
+            pa3 = pa_of_track([(0,p["x"],p["y"],0) for p in hc3["positions"]], w3,h3) if hc3.get("positions") else None
+            if pa2 is None or pa3 is None: continue
+            diff = min(abs(pa2-pa3), 360-abs(pa2-pa3))
+            if diff <= DUAL_CHANNEL_MAX_ANGLE_DIFF:
+                if best is None or diff < best:
+                    best = diff; bd = hc3
+        if bd:
+            hc2["dual_channel_match"] = {"with": f"C3#{bd['track_index']}", "pa_diff_deg": round(best,1)}
+    for hc3 in hits_c3:
+        t3 = parse_t(first_time(hc3))
+        if not t3: continue
+        w,h = hc3["image_size"]
+        pa3 = pa_of_track([(0,p["x"],p["y"],0) for p in hc3["positions"]], w,h) if hc3.get("positions") else None
+        best=None; bd=None
+        for hc2 in hits_c2:
+            t2 = parse_t(first_time(hc2)); if not t2: continue
+            dt = abs((t3 - t2).total_seconds())/60.0
+            if dt > DUAL_CHANNEL_MAX_MINUTES: continue
+            w2,h2 = hc2["image_size"]
+            pa2 = pa_of_track([(0,p["x"],p["y"],0) for p in hc2["positions"]], w2,h2) if hc2.get("positions") else None
+            if pa2 is None or pa3 is None: continue
+            diff = min(abs(pa2-pa3), 360-abs(pa2-pa3))
+            if diff <= DUAL_CHANNEL_MAX_ANGLE_DIFF:
+                if best is None or diff < best:
+                    best = diff; bd = hc2
+        if bd:
+            hc3["dual_channel_match"] = {"with": f"C2#{bd['track_index']}", "pa_diff_deg": round(best,1)}
+
+# ---- webhook
+def send_webhook(summary, hits):
+    if not ALERT_WEBHOOK_URL: return
+    try:
+        payload = {
+            "timestamp_utc": summary.get("timestamp_utc"),
+            "fetched_new_frames": summary.get("fetched_new_frames", 0),
+            "detectors": summary.get("detectors", {}),
+            "top_candidates": [
+                {
+                    "detector": h.get("detector"),
+                    "track_index": h.get("track_index"),
+                    "series_mid_frame": h.get("series_mid_frame"),
+                    "ai_label": h.get("ai_label"),
+                    "ai_score": h.get("ai_score"),
+                    "dual_channel_match": h.get("dual_channel_match"),
+                    "crop_path": h.get("crop_path")
+                } for h in hits[:5]
+            ]
+        }
+        requests.post(ALERT_WEBHOOK_URL, json=payload, timeout=10)
+    except Exception:
+        pass
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=6)
@@ -314,40 +419,74 @@ def main():
 
     fetched = fetch_window(hours_back=args.hours, step_min=args.step_min, root="frames")
     print(f"Fetched {len(fetched)} new frames.")
-    for p in fetched:
-        print(f" - {p}")
+    for p in fetched: print(f" - {p}")
 
     out_dir = pathlib.Path(args.out)
     all_hits = []
-    summary = {
-        "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        "hours_back": args.hours,
-        "step_min": args.step_min,
-        "detectors": {},
-        "fetched_new_frames": len(fetched),
-        "errors": []
-    }
+    detectors_stats = {}
+    errors = []
 
+    # Run C2 / C3
+    results = {}
     for det in ["C2", "C3"]:
         try:
             hits, stats = process_detector(det, out_dir, debug=debug, hours_back=args.hours, step_min=args.step_min)
             for h in hits:
                 h["timestamp_utc"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-            all_hits.extend(hits)
-            summary["detectors"][det] = stats
+            results[det] = hits
+            detectors_stats[det] = stats
         except Exception as e:
             print(f"[ERROR] {det} failed: {e}")
-            summary["detectors"][det] = {"frames": 0, "tracks": 0, "last_frame_name":"", "last_frame_iso":"", "last_frame_size":[0,0]}
-            summary["errors"].append(f"{det}: {repr(e)}")
+            detectors_stats[det] = {"frames":0,"tracks":0,"last_frame_name":"","last_frame_iso":"","last_frame_size":[0,0]}
+            errors.append(f"{det}: {repr(e)}")
 
-    all_hits = maybe_classify_with_ai(all_hits)
+    # AI annotate & veto (soft)
+    for det in ["C2","C3"]:
+        results[det] = maybe_classify_with_ai(results.get(det, []))
+        if AI_VETO_ENABLED:
+            kept = []
+            for h in results[det]:
+                lbl = (h.get("ai_label") or "").lower()
+                sc  = float(h.get("ai_score") or 0.0)
+                if lbl == AI_VETO_LABEL and sc >= AI_VETO_SCORE_MAX:
+                    # veto: keep but mark as low-priority
+                    h["vetoed"] = True
+                kept.append(h)
+            results[det] = kept
+
+    # Dual-channel correlation
+    correlate_c2_c3(results.get("C2",[]), results.get("C3",[]))
+
+    # Auto-select top N per detector for to_submit.json (exclude vetoed first)
+    to_submit = []
+    for det in ["C2","C3"]:
+        cands = results.get(det, [])
+        cands_sorted = sorted(cands, key=lambda h: (float(h.get("ai_score") or 0.0), h.get("dual_channel_match") is not None), reverse=True)
+        chosen = [h for h in cands_sorted if not h.get("vetoed")][:SELECT_TOP_N_FOR_SUBMIT]
+        for h in chosen:
+            h["auto_selected"] = True
+            to_submit.append({"detector": det, "track_index": h["track_index"], "series_mid_frame": h["series_mid_frame"], "crop_path": h["crop_path"]})
+
+    # Flatten for outputs
+    all_hits = results.get("C2",[]) + results.get("C3",[])
+
+    summary = {
+        "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "hours_back": args.hours,
+        "step_min": args.step_min,
+        "detectors": detectors_stats,
+        "fetched_new_frames": len(fetched),
+        "errors": errors,
+        "auto_selected_count": len(to_submit)
+    }
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    status_path = out_dir / "latest_status.json"
-    with open(status_path, "w") as f:
+    # status
+    with open(out_dir / "latest_status.json", "w") as f:
         json.dump({**summary, "candidates_in_report": len(all_hits)}, f, indent=2)
-    print(f"Wrote status: {status_path}")
+    print(f"Wrote status: {out_dir/'latest_status.json'}")
 
+    # candidates file
     if all_hits:
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         out_json = out_dir / f"candidates_{ts}.json"
@@ -356,6 +495,17 @@ def main():
         print(f"Wrote {out_json}")
     else:
         print("No candidates this run.")
+
+    # to_submit.json (auto shortlist)
+    with open(out_dir / "to_submit.json", "w") as f:
+        json.dump({"auto_selected": to_submit, "timestamp_utc": summary["timestamp_utc"]}, f, indent=2)
+    print(f"Wrote {out_dir/'to_submit.json'}")
+
+    # Optional webhook alert
+    # Send whenever we have at least one non-vetoed candidate
+    non_vetoed = [h for h in all_hits if not h.get("vetoed")]
+    if non_vetoed:
+        send_webhook(summary, non_vetoed)
 
 if __name__ == "__main__":
     main()
