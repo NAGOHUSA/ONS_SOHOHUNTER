@@ -1,15 +1,27 @@
 {
-  "timestamp_utc": "2025-10-27T13:37:59Z",
+  "timestamp_utc": "2025-10-27T13:41:59Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {
     "C2": {
       "frames": 0,
-      "tracks": 0
+      "tracks": 0,
+      "last_frame_name": "",
+      "last_frame_iso": "",
+      "last_frame_size": [
+        0,
+        0
+      ]
     },
     "C3": {
       "frames": 0,
-      "tracks": 0
+      "tracks": 0,
+      "last_frame_name": "",
+      "last_frame_iso": "",
+      "last_frame_size": [
+        0,
+        0
+      ]
     }
   },
   "fetched_new_frames": 0,
