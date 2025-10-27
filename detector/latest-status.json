@@ -1,0 +1,34 @@
+      - name: Run detector (with debug overlays)
+        env:
+          USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          DETECTOR_DEBUG: "1"             # <— turn on debug outputs
+        run: |
+          python detector/detect_comets.py \
+            --hours 6 \
+            --step-min 12 \
+            --out detections
+
+      - name: Upload debug frames (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ github.run_id }}
+          path: |
+            frames/C2/*.png
+            frames/C3/*.png
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Commit results, overlays, and status
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain detections)" ]; then
+            git add detections
+            git commit -m "Detector status & outputs: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          else
+            echo "Nothing new to commit (but artifact uploaded)."
+          fi
