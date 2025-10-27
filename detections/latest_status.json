@@ -1,13 +1,13 @@
 {
-  "timestamp_utc": "2025-10-27T20:40:04Z",
+  "timestamp_utc": "2025-10-27T20:46:42Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {
     "C2": {
       "frames": 30,
       "tracks": 8,
-      "last_frame_name": "C2_20251027_1325_c2_1024.jpg",
-      "last_frame_iso": "2025-10-27T13:25:00Z",
+      "last_frame_name": "C2_20251027_1636_c2_1024.jpg",
+      "last_frame_iso": "2025-10-27T16:36:00Z",
       "last_frame_size": [
         1024,
         1024
@@ -16,8 +16,8 @@
     "C3": {
       "frames": 30,
       "tracks": 8,
-      "last_frame_name": "C3_20251027_1330_c3_1024.jpg",
-      "last_frame_iso": "2025-10-27T13:30:00Z",
+      "last_frame_name": "C3_20251027_1642_c3_1024.jpg",
+      "last_frame_iso": "2025-10-27T16:42:00Z",
       "last_frame_size": [
         1024,
         1024

@@ -2,40 +2,40 @@
   "auto_selected": [
     {
       "detector": "C2",
-      "track_index": 5,
-      "series_mid_frame": "C2_20251027_0924_c2_1024.jpg",
-      "crop_path": "detections/C2_C2_20251027_0924_c2_1024.jpg_track5.png"
+      "track_index": 1,
+      "series_mid_frame": "C2_20251027_1248_c2_1024.jpg",
+      "crop_path": "detections/C2_C2_20251027_1248_c2_1024.jpg_track1.png"
     },
     {
       "detector": "C2",
-      "track_index": 1,
-      "series_mid_frame": "C2_20251027_0924_c2_1024.jpg",
-      "crop_path": "detections/C2_C2_20251027_0924_c2_1024.jpg_track1.png"
+      "track_index": 6,
+      "series_mid_frame": "C2_20251027_1248_c2_1024.jpg",
+      "crop_path": "detections/C2_C2_20251027_1248_c2_1024.jpg_track6.png"
     },
     {
       "detector": "C2",
       "track_index": 2,
-      "series_mid_frame": "C2_20251027_0924_c2_1024.jpg",
-      "crop_path": "detections/C2_C2_20251027_0924_c2_1024.jpg_track2.png"
-    },
-    {
-      "detector": "C3",
-      "track_index": 7,
-      "series_mid_frame": "C3_20251027_0930_c3_1024.jpg",
-      "crop_path": "detections/C3_C3_20251027_0930_c3_1024.jpg_track7.png"
+      "series_mid_frame": "C2_20251027_1248_c2_1024.jpg",
+      "crop_path": "detections/C2_C2_20251027_1248_c2_1024.jpg_track2.png"
     },
     {
       "detector": "C3",
       "track_index": 1,
-      "series_mid_frame": "C3_20251027_0930_c3_1024.jpg",
-      "crop_path": "detections/C3_C3_20251027_0930_c3_1024.jpg_track1.png"
+      "series_mid_frame": "C3_20251027_1242_c3_1024.jpg",
+      "crop_path": "detections/C3_C3_20251027_1242_c3_1024.jpg_track1.png"
+    },
+    {
+      "detector": "C3",
+      "track_index": 6,
+      "series_mid_frame": "C3_20251027_1242_c3_1024.jpg",
+      "crop_path": "detections/C3_C3_20251027_1242_c3_1024.jpg_track6.png"
     },
     {
       "detector": "C3",
       "track_index": 2,
-      "series_mid_frame": "C3_20251027_0930_c3_1024.jpg",
-      "crop_path": "detections/C3_C3_20251027_0930_c3_1024.jpg_track2.png"
+      "series_mid_frame": "C3_20251027_1242_c3_1024.jpg",
+      "crop_path": "detections/C3_C3_20251027_1242_c3_1024.jpg_track2.png"
     }
   ],
-  "timestamp_utc": "2025-10-27T20:40:04Z"
+  "timestamp_utc": "2025-10-27T20:46:42Z"
 }
