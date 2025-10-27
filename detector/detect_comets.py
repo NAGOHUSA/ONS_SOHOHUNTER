@@ -98,7 +98,7 @@ def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
 
 def load_series(folder: pathlib.Path):
     pairs = []
-    for p in sorted(folder.glob("*.*")):  # include jpg/png/gif (gif will be converted in fetcher)
+    for p in sorted(folder.glob("*.*")):
         if not p.suffix.lower() in (".png", ".jpg", ".jpeg"):
             continue
         im = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
@@ -191,17 +191,13 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
     hits = []
 
     if len(series) == 0:
-        # no frames at all
-        return hits, {"frames": 0, "tracks": 0,
-                      "last_frame_name": "", "last_frame_iso": "", "last_frame_size": [0,0]}
+        return hits, {"frames": 0, "tracks": 0, "last_frame_name": "", "last_frame_iso": "", "last_frame_size": [0,0]}
 
-    # NEW: always write lastframe/lastthumb even with <4 frames
     last_name, last_img = series[-1]
     if debug:
         save_thumbnail(last_img, out_dir / f"lastframe_{detector_name}.png", max_w=960)
         make_annotated_thumb(last_img, detector_name, last_name, hours_back, step_min, len(series), [], out_dir / f"lastthumb_{detector_name}.png")
 
-    # Only do tracking overlays if enough frames
     tracks = []
     if len(series) >= 4:
         base = series[0][1]
@@ -254,4 +250,49 @@ def main():
     debug = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
     fetched = fetch_window(hours_back=args.hours, step_min=args.step_min, root="frames")
-    print(f"Fet
+    print(f"Fetched {len(fetched)} new frames.")
+    for p in fetched:
+        print(f" - {p}")
+
+    out_dir = pathlib.Path(args.out)
+    all_hits = []
+    summary = {
+        "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "hours_back": args.hours,
+        "step_min": args.step_min,
+        "detectors": {},
+        "fetched_new_frames": len(fetched),
+        "errors": []
+    }
+
+    for det in ["C2", "C3"]:
+        try:
+            hits, stats = process_detector(det, out_dir, debug=debug, hours_back=args.hours, step_min=args.step_min)
+            for h in hits:
+                h["timestamp_utc"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            all_hits.extend(hits)
+            summary["detectors"][det] = stats
+        except Exception as e:
+            print(f"[ERROR] {det} failed: {e}")
+            summary["detectors"][det] = {"frames": 0, "tracks": 0, "last_frame_name":"", "last_frame_iso":"", "last_frame_size":[0,0]}
+            summary["errors"].append(f"{det}: {repr(e)}")
+
+    all_hits = maybe_classify_with_ai(all_hits)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    status_path = out_dir / "latest_status.json"
+    with open(status_path, "w") as f:
+        json.dump({**summary, "candidates_in_report": len(all_hits)}, f, indent=2)
+    print(f"Wrote status: {status_path}")
+
+    if all_hits:
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        out_json = out_dir / f"candidates_{ts}.json"
+        with open(out_json, "w") as f:
+            json.dump(all_hits, f, indent=2)
+        print(f"Wrote {out_json}")
+    else:
+        print("No candidates this run.")
+
+if __name__ == "__main__":
+    main()
