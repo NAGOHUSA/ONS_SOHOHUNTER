@@ -6,11 +6,12 @@
 # - Optional AI classifier stub annotation (ai_classifier.classify_crop_batch)
 # - C2<->C3 correlation by position angle (PA) within time window
 # - Exports: per-candidate TXT/CSV, overlays, thumbnails, latest_status.json,
-#            candidates_<ts>.json, to_submit.json, and combined CSV per run.
+#            candidates_<ts>.json, to_submit.json, combined CSV,
+#            ORIGINAL mid-frame copy, and ANNOTATED original with the exact spot.
 
 from __future__ import annotations
 
-import os, re, math, csv, json, argparse, pathlib
+import os, re, math, csv, json, argparse, pathlib, shutil
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
@@ -22,20 +23,20 @@ import requests
 from fetch_lasco import fetch_window  # must exist in detector/
 
 # ----------------- Config (env) -----------------
-AI_VETO_ENABLED            = os.getenv("AI_VETO_ENABLED", "1") == "1"
-AI_VETO_LABEL              = os.getenv("AI_VETO_LABEL", "not_comet")
-AI_VETO_SCORE_MAX          = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))
-ALERT_WEBHOOK_URL          = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+AI_VETO_ENABLED             = os.getenv("AI_VETO_ENABLED", "1") == "1"
+AI_VETO_LABEL               = os.getenv("AI_VETO_LABEL", "not_comet")
+AI_VETO_SCORE_MAX           = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))
+ALERT_WEBHOOK_URL           = os.getenv("ALERT_WEBHOOK_URL", "").strip()
 
-SELECT_TOP_N_FOR_SUBMIT    = int(os.getenv("SELECT_TOP_N_FOR_SUBMIT", "3"))
+SELECT_TOP_N_FOR_SUBMIT     = int(os.getenv("SELECT_TOP_N_FOR_SUBMIT", "3"))
 
-OCCULTER_RADIUS_FRACTION   = float(os.getenv("OCCULTER_RADIUS_FRACTION", "0.18"))
-MAX_EDGE_RADIUS_FRACTION   = float(os.getenv("MAX_EDGE_RADIUS_FRACTION", "0.98"))
+OCCULTER_RADIUS_FRACTION    = float(os.getenv("OCCULTER_RADIUS_FRACTION", "0.18"))
+MAX_EDGE_RADIUS_FRACTION    = float(os.getenv("MAX_EDGE_RADIUS_FRACTION", "0.98"))
 
-DUAL_CHANNEL_MAX_MINUTES   = int(os.getenv("DUAL_CHANNEL_MAX_MINUTES", "60"))
-DUAL_CHANNEL_MAX_ANGLE_DIFF= int(os.getenv("DUAL_CHANNEL_MAX_ANGLE_DIFF", "25"))
+DUAL_CHANNEL_MAX_MINUTES    = int(os.getenv("DUAL_CHANNEL_MAX_MINUTES", "60"))
+DUAL_CHANNEL_MAX_ANGLE_DIFF = int(os.getenv("DUAL_CHANNEL_MAX_ANGLE_DIFF", "25"))
 
-DEBUG_OVERLAYS             = os.getenv("DETECTOR_DEBUG", "0") == "1"
+DEBUG_OVERLAYS              = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
 # ----------------- IO helpers -----------------
 def ensure_dir(p: Path) -> None:
@@ -138,6 +139,60 @@ def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
         y += 20
 
     save_png(out_path, vis_bgr)
+
+# ----------------- Save ORIGINAL & ANNOTATED original -----------------
+def save_original_and_annotated(detector_name: str,
+                                mid_name: str,
+                                positions: List[Dict[str, Any]],
+                                out_dir: Path,
+                                highlight_mid: bool = True) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Copies the original mid-frame into detections/originals/ and writes an annotated
+    version into detections/annotated/ with the track drawn and the mid-point highlighted.
+    Returns (original_path_str, annotated_path_str). Either may be None if IO fails.
+    """
+    try:
+        src = Path("frames") / detector_name / mid_name
+        if not src.exists():
+            return None, None
+
+        # 1) Copy original to detections/originals/
+        originals_dir = out_dir / "originals"
+        originals_dir.mkdir(parents=True, exist_ok=True)
+        orig_dst = originals_dir / f"{detector_name}_{mid_name}"
+        if not orig_dst.exists():
+            shutil.copyfile(src, orig_dst)
+
+        # 2) Load original and draw annotation
+        img = cv2.imread(str(src), cv2.IMREAD_COLOR)
+        if img is None:
+            return str(orig_dst), None
+
+        pts = [(int(round(p["x"])), int(round(p["y"]))) for p in positions if "x" in p and "y" in p]
+        for i in range(1, len(pts)):
+            cv2.line(img, pts[i-1], pts[i], (0, 255, 255), 2, cv2.LINE_AA)
+        for p in pts:
+            cv2.circle(img, p, 3, (0, 255, 255), -1, cv2.LINE_AA)
+
+        if highlight_mid and pts:
+            mid_i = len(pts) // 2
+            cv2.circle(img, pts[mid_i], 8, (0, 180, 0), 2, cv2.LINE_AA)
+            cv2.circle(img, pts[mid_i], 2, (0, 255, 0), -1, cv2.LINE_AA)
+            cv2.putText(img, "candidate", (pts[mid_i][0] + 10, pts[mid_i][1] - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 0), 1, cv2.LINE_AA)
+
+        label = f"{detector_name}  {mid_name}"
+        cv2.rectangle(img, (8, 8), (8 + 8*len(label), 36), (12, 22, 45), -1)
+        cv2.putText(img, label, (14, 30), cv2.FONT_HERSHEY_DUPLEX, 0.55, (230, 238, 252), 1, cv2.LINE_AA)
+
+        ann_dir = out_dir / "annotated"
+        ann_dir.mkdir(parents=True, exist_ok=True)
+        ann_path = ann_dir / f"{detector_name}_{mid_name}_annot_track.png"
+        cv2.imwrite(str(ann_path), img)
+
+        return str(orig_dst), str(ann_path)
+    except Exception:
+        return None, None
 
 # ----------------- Data loading & stabilization -----------------
 def load_series(folder: pathlib.Path) -> List[Tuple[str, np.ndarray]]:
@@ -337,7 +392,11 @@ def process_detector(detector_name: str, out_dir: Path,
             crop_path = out_dir / f"{detector_name}_{mid_name}_track{i+1}.png"
             save_png(crop_path, crop)
 
+            # per-candidate Sungrazer TXT/CSV
             write_sungrazer_exports(detector_name, i+1, positions, image_size=(w,h), out_dir=out_dir / "reports")
+
+            # NEW: save original mid-frame copy + annotated original with exact spot
+            orig_path, ann_path = save_original_and_annotated(detector_name, mid_name, positions, out_dir)
 
             hits.append({
                 "detector": detector_name,
@@ -346,7 +405,9 @@ def process_detector(detector_name: str, out_dir: Path,
                 "crop_path": str(crop_path),
                 "positions": positions,
                 "image_size": [int(w), int(h)],
-                "origin": "upper_left"
+                "origin": "upper_left",
+                "original_mid_path": orig_path,      # new
+                "annotated_mid_path": ann_path       # new
             })
 
         if DEBUG_OVERLAYS:
@@ -474,7 +535,8 @@ def write_combined_csv(out_dir: Path, run_ts: str, hits: List[Dict[str,Any]]) ->
     csv_path = reports_dir / f"report_{run_ts}_combined.csv"
     header = ["detector","track_index","series_mid_frame","frame_time_utc","x","y",
               "image_width","image_height","origin","ai_label","ai_score",
-              "dual_channel_with","dual_channel_pa_diff_deg","vetoed","auto_selected"]
+              "dual_channel_with","dual_channel_pa_diff_deg","vetoed","auto_selected",
+              "original_mid_path","annotated_mid_path"]
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(header)
@@ -491,7 +553,8 @@ def write_combined_csv(out_dir: Path, run_ts: str, hits: List[Dict[str,Any]]) ->
                     w_img, h_img, h.get("origin"),
                     ai_label, ai_score,
                     dual.get("with"), dual.get("pa_diff_deg"),
-                    h.get("vetoed") is True, h.get("auto_selected") is True
+                    h.get("vetoed") is True, h.get("auto_selected") is True,
+                    h.get("original_mid_path"), h.get("annotated_mid_path")
                 ])
     return str(csv_path)
 
@@ -549,7 +612,6 @@ def main():
     to_submit: List[Dict[str,Any]] = []
     for det in ["C2","C3"]:
         cands = results.get(det, [])
-        # Prefer higher AI score; tie-break by having a dual-channel match
         cands_sorted = sorted(
             cands,
             key=lambda h: (
