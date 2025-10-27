@@ -3,7 +3,14 @@ import os
 import re
 import pathlib
 import requests
-from typing import List
+from typing import List, Tuple, Optional
+from datetime import datetime
+from io import BytesIO
+
+try:
+    from PIL import Image  # for GIF->PNG conversion if needed
+except Exception:
+    Image = None  # we'll skip conversion if Pillow isn't available
 
 BASE = "https://soho.nascom.nasa.gov"
 LATEST = f"{BASE}/data/LATEST"
@@ -11,122 +18,191 @@ INDEX = {
     "C2": f"{LATEST}/latest-lascoC2.html",
     "C3": f"{LATEST}/latest-lascoC3.html",
 }
-
-HEADERS = {
-    "User-Agent": "ONS_SOHOHUNTER/1.0 (+https://github.com/NAGOHUSA/ONS_SOHOHUNTER)"
+CURRENT = {
+    "C2": [f"{LATEST}/current_c2.jpg", f"{LATEST}/current_c2.gif", f"{LATEST}/current_c2.png"],
+    "C3": [f"{LATEST}/current_c3.jpg", f"{LATEST}/current_c3.gif", f"{LATEST}/current_c3.png"],
 }
 
-# We’ll accept common raster formats you’re likely to want to analyze/preview.
-IMG_EXTS = (".png", ".jpg", ".jpeg", ".gif")
+HEADERS = {
+    "User-Agent": "ONS_SOHOHUNTER/1.1 (+https://github.com/NAGOHUSA/ONS_SOHOHUNTER)"
+}
 
-HREF_OR_SRC_IMG = re.compile(
-    r'''(?:href|src)\s*=\s*["']([^"']+\.(?:png|jpg|jpeg|gif))["']''',
-    re.IGNORECASE
-)
+IMG_EXTS = (".png", ".jpg", ".jpeg", ".gif")
+HREF_OR_SRC_IMG = re.compile(r'''(?:href|src)\s*=\s*["']([^"']+\.(?:png|jpg|jpeg|gif))["']''', re.IGNORECASE)
+
+
+def _log(msg: str):
+    print(f"[fetch] {msg}")
 
 
 def _abs_url(url: str) -> str:
-    """Normalize to an absolute URL under the /data/LATEST/ base if needed."""
     if url.startswith("http://") or url.startswith("https://"):
         return url
     if url.startswith("/"):
         return f"{BASE}{url}"
-    # relative path on the LATEST page
     return f"{LATEST}/{url}"
 
 
 def _want(url: str) -> bool:
-    """Filter thumbnails or irrelevant assets if present."""
     u = url.lower()
     if not u.endswith(IMG_EXTS):
         return False
-    # Skip obvious thumbnails if present on the page.
     if "/thumb" in u or "_thumb" in u:
         return False
+    # prefer lasco C2/C3 paths/images
+    if "lasco" not in u:
+        return False
     return True
 
 
-def _download(url: str, dst_path: pathlib.Path) -> bool:
-    """Download URL into dst_path. Returns True if saved (new), False if already exists."""
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    if dst_path.exists() and dst_path.stat().st_size > 0:
-        return False
+def _timestamp_from_headers(headers) -> Optional[str]:
+    # e.g., "Mon, 27 Oct 2025 15:04:00 GMT"
+    lm = headers.get("Last-Modified")
+    if not lm:
+        return None
+    try:
+        dt = datetime.strptime(lm, "%a, %d %b %Y %H:%M:%S %Z")
+        return dt.strftime("%Y%m%d_%H%M%S")
+    except Exception:
+        return None
+
+
+def _save_bytes(content: bytes, dst: pathlib.Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with open(dst, "wb") as f:
+        f.write(content)
+
+
+def _download_bin(url: str) -> Tuple[bytes, dict]:
     r = requests.get(url, headers=HEADERS, timeout=60)
     r.raise_for_status()
-    with open(dst_path, "wb") as f:
-        f.write(r.content)
-    return True
+    return r.content, r.headers
 
 
-def fetch_latest_from_latest_page(detector: str, count: int, root: pathlib.Path) -> List[str]:
+def _save_current(det: str, root: pathlib.Path) -> Optional[str]:
     """
-    Fetch up to `count` newest images for given detector ('C2' or 'C3') from the
-    SOHO/NASA LATEST index page and save under frames/<detector>/.
-    Returns list of saved file paths (strings).
+    Try current_c2/c3 endpoints first. If GIF, convert to PNG (when Pillow available).
+    Returns saved path or None.
     """
-    detector = detector.upper()
-    if detector not in INDEX:
-        raise ValueError("detector must be 'C2' or 'C3'")
+    for url in CURRENT[det]:
+        try:
+            data, headers = _download_bin(url)
+        except Exception as e:
+            _log(f"{det}: current fetch failed {url} -> {e}")
+            continue
 
-    idx_url = INDEX[detector]
+        ts = _timestamp_from_headers(headers) or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        ext = os.path.splitext(url.split("?")[0])[1].lower()
+        fname_base = f"{det}_{ts}"
+
+        det_dir = root / det
+        det_dir.mkdir(parents=True, exist_ok=True)
+
+        if ext == ".gif":
+            if Image:
+                try:
+                    im = Image.open(BytesIO(data))
+                    # take first frame if animated; convert to L (grayscale) for consistency
+                    im.seek(0)
+                    if im.mode not in ("L", "LA"):
+                        im = im.convert("L")
+                    dst = det_dir / f"{fname_base}.png"
+                    im.save(dst)
+                    _log(f"{det}: saved converted PNG from GIF -> {dst.name}")
+                    return str(dst)
+                except Exception as e:
+                    _log(f"{det}: GIF conversion failed: {e}")
+                    # if conversion fails, just write the GIF
+                    dst = det_dir / f"{fname_base}.gif"
+                    _save_bytes(data, dst)
+                    _log(f"{det}: saved GIF as-is -> {dst.name}")
+                    return str(dst)
+            else:
+                dst = det_dir / f"{fname_base}.gif"
+                _save_bytes(data, dst)
+                _log(f"{det}: saved GIF (no Pillow) -> {dst.name}")
+                return str(dst)
+        else:
+            # jpg/png
+            dst = det_dir / f"{fname_base}{ext}"
+            _save_bytes(data, dst)
+            _log(f"{det}: saved current -> {dst.name}")
+            return str(dst)
+
+    return None
+
+
+def _from_latest_page(det: str, count: int, root: pathlib.Path) -> List[str]:
+    url = INDEX[det]
     try:
-        html = requests.get(idx_url, headers=HEADERS, timeout=60).text
-    except Exception:
+        html = requests.get(url, headers=HEADERS, timeout=60).text
+    except Exception as e:
+        _log(f"{det}: latest page fetch failed {url} -> {e}")
         return []
 
-    # Find candidate image links on the page
-    all_links = [_abs_url(m.group(1)) for m in HREF_OR_SRC_IMG.finditer(html)]
-    # Filter and de-dup while preserving order (newest first: the page usually lists newest near the top)
+    links = []
+    for m in HREF_OR_SRC_IMG.finditer(html):
+        u = _abs_url(m.group(1))
+        if _want(u):
+            links.append(u)
+
+    # de-dup preserving order
     seen = set()
-    candidates: List[str] = []
-    for u in all_links:
-        if not _want(u):
-            continue
-        # keep only links that look like they belong to LASCO and the detector page (we’re already on C2/C3 page)
-        if "lasco" not in u.lower():
-            continue
+    ordered = []
+    for u in links:
         if u in seen:
             continue
         seen.add(u)
-        candidates.append(u)
+        ordered.append(u)
 
-    # Limit to requested count
     if count > 0:
-        candidates = candidates[:count]
+        ordered = ordered[:count]
 
     saved: List[str] = []
-    det_root = root / detector
-    for u in candidates:
+    det_dir = root / det
+    det_dir.mkdir(parents=True, exist_ok=True)
+
+    for u in ordered:
         fname = os.path.basename(u.split("?")[0])
-        # Prefix filename with detector if not already present (helps uniqueness)
-        if not fname.upper().startswith(detector + "_"):
-            fname = f"{detector}_{fname}"
-        dst = det_root / fname
+        # prepend det if not present
+        if not fname.upper().startswith(det + "_"):
+            fname = f"{det}_{fname}"
+        dst = det_dir / fname
+        if dst.exists() and dst.stat().st_size > 0:
+            continue
         try:
-            _download(u, dst)
+            data, _ = _download_bin(u)
+            _save_bytes(data, dst)
             saved.append(str(dst))
-        except Exception:
-            # Skip silently on per-file failures; page sometimes has transient links.
-            pass
+            _log(f"{det}: saved from latest page -> {dst.name}")
+        except Exception as e:
+            _log(f"{det}: failed downloading {u} -> {e}")
 
     return saved
 
 
 def fetch_window(hours_back: int = 6, step_min: int = 12, root: str = "frames") -> List[str]:
     """
-    Compatibility shim used by the pipeline.
-    We approximate how many images to fetch from the LATEST pages based on hours_back/step_min,
-    then pull that many *latest* images for each of C2 and C3.
-
-    Returns list of absolute file paths saved.
+    Pull newest images for both C2 and C3 detectors.
+    Strategy:
+      1) Try the 'current_c2/c3' endpoints to guarantee at least one frame.
+      2) Also parse the latest index pages to grab several more recent frames.
+    Returns absolute file paths saved (new downloads only).
     """
     root_path = pathlib.Path(root)
-    # Rough estimate: number of frames you *would* want in this window.
-    # Clamp to a sane range the LATEST pages typically expose.
     est = max(2, min(48, (hours_back * 60) // max(1, step_min)))
 
     saved_all: List[str] = []
-    for det in ("C2", "C3"):
-        saved_all.extend(fetch_latest_from_latest_page(det, est, root_path))
 
+    for det in ("C2", "C3"):
+        # Always try to get at least one "current" frame
+        first = _save_current(det, root_path)
+        if first:
+            saved_all.append(first)
+
+        # Then fetch a handful more from the listing page
+        more = _from_latest_page(det, est, root_path)
+        saved_all.extend(more)
+
+    _log(f"summary: saved {len(saved_all)} new file(s)")
     return saved_all
