@@ -2,7 +2,7 @@ name: SOHO Comet Hunt
 
 on:
   schedule:
-    - cron: "0 * * * *"  # hourly UTC
+    - cron: "0 * * * *"   # hourly UTC
   workflow_dispatch: {}
 
 permissions:
@@ -26,9 +26,12 @@ jobs:
 
       - name: Run detector (with debug overlays)
         env:
-          USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}   # set to "1" to enable
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}         # only needed if above = "1"
-          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}   # optional Slack/Discord
+          # Optional AI second-stage (leave unset to skip)
+          USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Optional Slack/Discord webhook
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          # Always produce overlays + status JSON
           DETECTOR_DEBUG: "1"
         run: |
           python detector/detect_comets.py \
@@ -53,8 +56,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
-            git commit -m "Detector status & outputs: $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
-          else
-            echo "Nothing new to commit (but artifact uploaded)."
-          fi
+            git commit -m "Detector status & outputs: $(date -u
