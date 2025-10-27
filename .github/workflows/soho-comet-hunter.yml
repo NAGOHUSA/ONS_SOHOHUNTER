@@ -2,64 +2,62 @@ name: SOHO Comet Hunt
 
 on:
   schedule:
-    - cron: "0 * * * *"   # hourly UTC
-  workflow_dispatch: {}
-
-permissions:
-  contents: write
+    - cron: "0 * * * *"       # hourly
+    - cron: "*/15 * * * *"    # aggressive cadence (every 15 minutes)
+  workflow_dispatch:
 
 jobs:
-  hunt:
+  run:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r detector/requirements.txt
+          pip install opencv-python-headless numpy requests pillow
 
-      - name: Run detector (with debug overlays)
+      - name: Fetch & Detect
         env:
-          USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DETECTOR_DEBUG: "1"
+          USE_AI_CLASSIFIER: "0"     # set to 1 if you add a classifier module
+          AI_VETO_ENABLED: "1"
+          AI_VETO_LABEL: "not_comet"
+          AI_VETO_SCORE_MAX: "0.9"
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-          DETECTOR_DEBUG: "1"   # ensures status + thumbnails are written every run
+          SELECT_TOP_N_FOR_SUBMIT: "3"
+          OCCULTER_RADIUS_FRACTION: "0.18"
+          MAX_EDGE_RADIUS_FRACTION: "0.98"
+          DUAL_CHANNEL_MAX_MINUTES: "60"
+          DUAL_CHANNEL_MAX_ANGLE_DIFF: "25"
         run: |
-          python detector/detect_comets.py \
-            --hours 6 \
-            --step-min 12 \
-            --out detections
+          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
+          echo "frames tree:"; find frames -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
+          echo "detections tree:"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
-      - name: Upload debug frames (artifact)
-        if: always()
+      - name: Commit outputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain detections)" ]; then
+            git add detections
+            git commit -m "Detector status & outputs: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git push
+          else
+            echo "No new artifacts to commit."
+          fi
+
+      - name: Upload artifacts (debug)
         uses: actions/upload-artifact@v4
         with:
           name: frames-${{ github.run_id }}
           path: |
-            frames/C2/*.png
-            frames/C3/*.png
+            frames/C2/*
+            frames/C3/*
           if-no-files-found: ignore
           retention-days: 3
-
-      - name: Commit results, overlays, and status
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if [ -n "$(git status --porcelain detections)" ]; then
-            ts="$(date -u '+%Y-%m-%d %H:%M UTC')"
-            echo "Committing new results for ${ts}"
-            git add detections
-            git commit -m "Detector status & outputs: ${ts}"
-            git push
-          else
-            echo "Nothing new to commit (but artifact uploaded)."
-          fi
