@@ -8,8 +8,8 @@ import re
 # ---------- helpers (draw + sheets + annotate) ----------
 def draw_tracks_overlay(base_img: np.ndarray, tracks, out_path: Path, radius=3, thickness=1):
     vis = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR)
-    # draw faint grid/crosshair for context
     h, w = base_img.shape[:2]
+    # subtle crosshair for orientation
     cv2.line(vis, (w//2, 0), (w//2, h), (40,40,40), 1)
     cv2.line(vis, (0, h//2), (w, h//2), (40,40,40), 1)
     for idx, tr in enumerate(tracks, 1):
@@ -19,7 +19,8 @@ def draw_tracks_overlay(base_img: np.ndarray, tracks, out_path: Path, radius=3, 
         for i in range(1, len(pts)):
             cv2.line(vis, pts[i-1], pts[i], (0,200,255), thickness)
         if pts:
-            cv2.putText(vis, f"#{idx}", pts[-1], cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,215,255), 1, cv2.LINE_AA)
+            cv2.putText(vis, f"#{idx}", (pts[-1][0]+6, pts[-1][1]-6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,215,255), 1, cv2.LINE_AA)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_path), vis)
 
@@ -46,8 +47,8 @@ def contact_sheet(images: list[np.ndarray], cols=4, pad=4):
 
 def save_thumbnail(img: np.ndarray, out_path: Path, max_w=960):
     h, w = img.shape[:2]
-    scale = min(1.0, max_w / w) if w else 1.0
-    if scale != 1.0:
+    if w and w > max_w:
+        scale = max_w / w
         img = cv2.resize(img, (int(w*scale), int(h*scale)))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_path), img)
@@ -65,11 +66,10 @@ def parse_frame_iso(name: str):
 
 def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
                          hours_back: int, step_min: int, frames: int, tracks, out_path: Path):
-    """Blend: grayscale → color, draw tracks + text block with run info."""
-    # Base: BGR
+    """Create an annotated thumbnail with track overlays + run stats banner."""
     vis = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
 
-    # Draw tracks (reuse logic)
+    # draw tracks
     for idx, tr in enumerate(tracks, 1):
         pts = [(int(x), int(y)) for (_,x,y,_) in tr]
         for p in pts:
@@ -80,29 +80,27 @@ def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
             cv2.putText(vis, f"#{idx}", (pts[-1][0]+6, pts[-1][1]-6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,215,255), 1, cv2.LINE_AA)
 
-    # Semi-transparent top banner
+    # top banner
     h, w = gray_img.shape[:2]
     banner_h = 64
     overlay = vis.copy()
     cv2.rectangle(overlay, (0,0), (w, banner_h), (12, 22, 45), -1)
     vis = cv2.addWeighted(overlay, 0.7, vis, 0.3, 0)
 
-    # Text info
     iso = parse_frame_iso(last_name) or ""
     text_lines = [
         f"SOHO Comet Hunter — {detector}",
         f"Last frame: {last_name}  {iso}",
-        f"Window: {hours_back}h, Step: {step_min}m  | Frames: {frames}  Tracks: {len(tracks)}",
+        f"Window: {hours_back}h  Step: {step_min}m  | Frames: {frames}  Tracks: {len(tracks)}",
     ]
     y = 22
-    for i, line in enumerate(text_lines):
+    for line in text_lines:
         cv2.putText(vis, line, (12, y), cv2.FONT_HERSHEY_DUPLEX, 0.6, (230,238,252), 1, cv2.LINE_AA)
         y += 20
 
-    # Border
     cv2.rectangle(vis, (0,0), (w-1,h-1), (36,56,96), 1)
-
-    save_thumbnail(cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY), out_path)  # keep grayscale aesthetic
+    # keep grayscale aesthetic in final thumbnail
+    save_thumbnail(cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY), out_path)
 
 # ---------- load + stabilize ----------
 def load_series(folder: pathlib.Path):
@@ -200,9 +198,10 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
     series = load_series(folder)
     hits = []
     if len(series) < 4:
-        # still try to write a tiny status
         last_name = series[-1][0] if series else ""
-        return hits, {"frames": len(series), "tracks": 0, "last_frame_name": last_name, "last_frame_iso": parse_frame_iso(last_name) or "", "last_frame_size": [0,0]}
+        return hits, {"frames": len(series), "tracks": 0,
+                      "last_frame_name": last_name, "last_frame_iso": parse_frame_iso(last_name) or "",
+                      "last_frame_size": [0,0]}
 
     base = series[0][1]
     aligned = [(series[0][0], base)]
@@ -233,14 +232,12 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
         })
 
     if debug:
-        # Overlays
-        overlay_path = out_dir / f"overlay_{detector_name}.png"
-        draw_tracks_overlay(mid_img, tracks, overlay_path)
-        # Contact sheet of last 8 frames
+        # overlay + contact sheet
+        draw_tracks_overlay(mid_img, tracks, out_dir / f"overlay_{detector_name}.png")
         sheet = contact_sheet([im for _,im in aligned[-8:]])
         if sheet is not None:
             cv2.imwrite(str(out_dir / f"contact_{detector_name}.png"), sheet)
-        # Last frames (plain + annotated)
+        # last frames (plain + annotated)
         save_thumbnail(last_img, out_dir / f"lastframe_{detector_name}.png", max_w=960)
         make_annotated_thumb(last_img, detector_name, last_name, hours_back, step_min, len(series), tracks, out_dir / f"lastthumb_{detector_name}.png")
 
