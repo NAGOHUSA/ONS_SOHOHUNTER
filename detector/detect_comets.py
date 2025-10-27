@@ -65,23 +65,22 @@ def parse_frame_iso(name: str):
 
 def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
                          hours_back: int, step_min: int, frames: int, tracks, out_path: Path):
-    vis = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
+    vis = cv2.cvtColor(gray_img, cv2.COLOR_BGR2GRAY) if len(gray_img.shape)==3 else gray_img.copy()
+    vis_bgr = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
     for idx, tr in enumerate(tracks, 1):
         pts = [(int(x), int(y)) for (_,x,y,_) in tr]
         for p in pts:
-            cv2.circle(vis, p, 3, (0,255,255), -1)
+            cv2.circle(vis_bgr, p, 3, (0,255,255), -1)
         for i in range(1, len(pts)):
-            cv2.line(vis, pts[i-1], pts[i], (0,200,255), 1)
+            cv2.line(vis_bgr, pts[i-1], pts[i], (0,200,255), 1)
         if pts:
-            cv2.putText(vis, f"#{idx}", (pts[-1][0]+6, pts[-1][1]-6),
+            cv2.putText(vis_bgr, f"#{idx}", (pts[-1][0]+6, pts[-1][1]-6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,215,255), 1, cv2.LINE_AA)
-
-    h, w = gray_img.shape[:2]
+    h, w = vis_bgr.shape[:2]
     banner_h = 64
-    overlay = vis.copy()
+    overlay = vis_bgr.copy()
     cv2.rectangle(overlay, (0,0), (w, banner_h), (12, 22, 45), -1)
-    vis = cv2.addWeighted(overlay, 0.7, vis, 0.3, 0)
-
+    vis_bgr = cv2.addWeighted(overlay, 0.7, vis_bgr, 0.3, 0)
     iso = parse_frame_iso(last_name) or ""
     lines = [
         f"SOHO Comet Hunter — {detector}",
@@ -90,11 +89,10 @@ def make_annotated_thumb(gray_img: np.ndarray, detector: str, last_name: str,
     ]
     y = 22
     for line in lines:
-        cv2.putText(vis, line, (12, y), cv2.FONT_HERSHEY_DUPLEX, 0.6, (230,238,252), 1, cv2.LINE_AA)
+        cv2.putText(vis_bgr, line, (12, y), cv2.FONT_HERSHEY_DUPLEX, 0.6, (230,238,252), 1, cv2.LINE_AA)
         y += 20
-
-    cv2.rectangle(vis, (0,0), (w-1,h-1), (36,56,96), 1)
-    save_thumbnail(cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY), out_path)
+    cv2.rectangle(vis_bgr, (0,0), (w-1,h-1), (36,56,96), 1)
+    save_thumbnail(cv2.cvtColor(vis_bgr, cv2.COLOR_BGR2GRAY), out_path)
 
 def load_series(folder: pathlib.Path):
     pairs = []
@@ -185,6 +183,46 @@ def maybe_classify_with_ai(hits: list[dict]) -> list[dict]:
         h["ai_label"] = s.get("label", "unknown")
     return hits
 
+# ---------- NEW: writer for Sungrazer exports ----------
+def write_sungrazer_exports(detector_name: str, track_idx: int, positions: list[dict], image_size, out_dir: pathlib.Path):
+    """
+    positions: list of {frame, time_utc, x, y}
+    Writes:
+      - detections/reports/<detector>_track<idx>_sungrazer.txt (paste into form)
+      - detections/reports/<detector>_track<idx>_sungrazer.csv (Frame Time, X, Y)
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    first = positions[0] if positions else {}
+    date_first = (first.get("time_utc","") or "").split("T")[0]
+    camera = detector_name
+    img_w, img_h = image_size
+    # Our coordinates are OpenCV pixel coords with origin at top-left (UL).
+    origin = "Upper Left"
+
+    # TXT (human/pasteable)
+    lines = []
+    lines.append("=== Sungrazer Report Helper ===")
+    lines.append(f"Camera: {camera}")
+    lines.append(f"Image Size: {img_w}x{img_h}")
+    lines.append(f"Your (0,0) position: {origin}")
+    lines.append(f"Date of FIRST IMAGE: {date_first}")
+    lines.append("Frames (time_utc, x, y):")
+    for p in positions:
+        t = (p["time_utc"] or "").replace("T"," ").replace("Z","")
+        lines.append(f"  {t}, {int(round(p['x']))}, {int(round(p['y']))}")
+    txt = "\n".join(lines) + "\n"
+    txt_path = out_dir / f"{detector_name}_track{track_idx}_sungrazer.txt"
+    with open(txt_path, "w") as f:
+        f.write(txt)
+
+    # CSV
+    csv_path = out_dir / f"{detector_name}_track{track_idx}_sungrazer.csv"
+    with open(csv_path, "w") as f:
+        f.write("frame_time_utc,x,y\n")
+        for p in positions:
+            f.write(f"{p['time_utc']},{int(round(p['x']))},{int(round(p['y']))}\n")
+    return str(txt_path), str(csv_path)
+
 def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hours_back=6, step_min=12):
     folder = pathlib.Path("frames") / detector_name
     series = load_series(folder)
@@ -199,18 +237,31 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
         make_annotated_thumb(last_img, detector_name, last_name, hours_back, step_min, len(series), [], out_dir / f"lastthumb_{detector_name}.png")
 
     tracks = []
+    exports = []   # NEW: list of export files for UI
     if len(series) >= 4:
         base = series[0][1]
         aligned = [(series[0][0], base)]
         for name, im in series[1:]:
             aligned.append((name, stabilize(base, im)))
+
         pts = find_moving_points(aligned)
         tracks = link_tracks(pts, min_len=3)
         if tracks:
             tracks = sorted(tracks, key=score_track, reverse=True)[:5]
 
+        # Build positions per track mapped back to frame names/times
+        names = [name for name,_ in aligned]
+        images = [img for _,img in aligned]
         mid_name, mid_img = aligned[len(aligned)//2]
-        for i,tr in enumerate(tracks):
+
+        for i, tr in enumerate(tracks):
+            # positions array
+            positions = []
+            for (t_idx, x, y, _a) in tr:
+                fname = names[t_idx]          # t_idx indexes aligned list
+                iso = parse_frame_iso(fname) or ""
+                positions.append({"frame": fname, "time_utc": iso, "x": float(x), "y": float(y)})
+
             crop = crop_along_track(mid_img, tr)
             if crop.size == 0:
                 continue
@@ -218,16 +269,28 @@ def process_detector(detector_name: str, out_dir: pathlib.Path, debug=False, hou
             det_dir.mkdir(parents=True, exist_ok=True)
             crop_path = det_dir / f"{detector_name}_{mid_name}_track{i+1}.png"
             cv2.imwrite(str(crop_path), crop)
+
+            # NEW: write Sungrazer helper files
+            txt_path, csv_path = write_sungrazer_exports(
+                detector_name, i+1, positions, image_size=(images[0].shape[1], images[0].shape[0]),
+                out_dir=out_dir / "reports"
+            )
+            exports.append({"txt": txt_path, "csv": csv_path})
+
             hits.append({
                 "detector": detector_name,
                 "series_mid_frame": mid_name,
                 "track_index": i+1,
-                "crop_path": str(crop_path)
+                "crop_path": str(crop_path),
+                # NEW: include positions + metadata for the web UI
+                "positions": positions,
+                "image_size": [int(images[0].shape[1]), int(images[0].shape[0])],
+                "origin": "upper_left"
             })
 
         if debug:
             draw_tracks_overlay(mid_img, tracks, out_dir / f"overlay_{detector_name}.png")
-            sheet = contact_sheet([im for _,im in aligned[-8:]])
+            sheet = contact_sheet([im for im in images[-8:]])
             if sheet is not None:
                 cv2.imwrite(str(out_dir / f"contact_{detector_name}.png"), sheet)
 
