@@ -3,14 +3,25 @@ name: SOHO Comet Hunt
 on:
   schedule:
     - cron: "0 * * * *"       # hourly
-    - cron: "*/15 * * * *"    # aggressive cadence (every 15 minutes)
+    - cron: "*/15 * * * *"    # every 15 minutes
   workflow_dispatch:
+
+# IMPORTANT: allow this workflow to push commits back to the repo
+permissions:
+  contents: write
 
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (with write token)
+        uses: actions/checkout@v4
+        with:
+          # GITHUB_TOKEN is automatically provided; with permissions: write it can push
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -25,7 +36,7 @@ jobs:
       - name: Fetch & Detect
         env:
           DETECTOR_DEBUG: "1"
-          USE_AI_CLASSIFIER: "0"     # set to 1 if you add a classifier module
+          USE_AI_CLASSIFIER: "0"     # set to "1" to enable the stub classifier
           AI_VETO_ENABLED: "1"
           AI_VETO_LABEL: "not_comet"
           AI_VETO_SCORE_MAX: "0.9"
@@ -41,23 +52,52 @@ jobs:
           echo "detections tree:"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
       - name: Commit outputs
+        id: commit_outputs
         run: |
+          set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
             git commit -m "Detector status & outputs: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-            git push
+            echo "committed=true" >> $GITHUB_OUTPUT
           else
             echo "No new artifacts to commit."
+            echo "committed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Upload artifacts (debug)
+      - name: Push (using GITHUB_TOKEN)
+        if: steps.commit_outputs.outputs.committed == 'true'
+        run: |
+          set -e
+          git push origin HEAD:${GITHUB_REF#refs/heads/}
+
+      # Optional fallback for orgs/protected branches: add a PAT in repo secrets as PUSH_TOKEN (repo scope)
+      - name: Push fallback with PAT
+        if: steps.commit_outputs.outputs.committed == 'true' && failure()
+        env:
+          PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
+        run: |
+          if [ -z "${PUSH_TOKEN}" ]; then
+            echo "No PUSH_TOKEN provided; cannot fallback push."
+            exit 1
+          fi
+          # Re-auth with PAT
+          git remote set-url origin https://${PUSH_TOKEN}@github.com/${{ github.repository }}.git
+          git push origin HEAD:${GITHUB_REF#refs/heads/}
+
+      - name: Upload artifacts (always)
         uses: actions/upload-artifact@v4
         with:
-          name: frames-${{ github.run_id }}
+          name: detections-${{ github.run_id }}
           path: |
-            frames/C2/*
-            frames/C3/*
-          if-no-files-found: ignore
-          retention-days: 3
+            detections/latest_status.json
+            detections/candidates_*.json
+            detections/reports/*.csv
+            detections/reports/*.txt
+            detections/overlay_*.png
+            detections/contact_*.png
+            detections/lastthumb_*.png
+          if-no-files-found: warn
+          retention-days: 7
