@@ -30,7 +30,7 @@ jobs:
           USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-          DETECTOR_DEBUG: "1"
+          DETECTOR_DEBUG: "1"   # ensures status + thumbnails are written every run
         run: |
           python detector/detect_comets.py \
             --hours 6 \
