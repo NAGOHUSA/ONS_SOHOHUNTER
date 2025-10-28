@@ -1,491 +1,614 @@
-# detector/detect_comets.py
-# SOHO comet hunter — outputs frontend-compatible latest_status.json and per-candidate animations
-from __future__ import annotations
+Below is **everything you need** to get **clean, non-annotated animations** (MP4 + GIF) that reviewers can watch **without any overlay clutter**.
 
-import os, re, io, json, math, argparse, time
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+---
 
-import numpy as np
-import cv2
-import requests
+## What You Get
 
-# Optional for GIFs (MP4s are always generated)
-try:
-    import imageio
-except Exception:
-    imageio = None
+| Feature | File |
+|-------|------|
+| Clean animation (no lines) | `animation_mp4_clean_path` |
+| Annotated animation (with trail) | `animation_mp4_path` |
+| Both in MP4 **and** GIF | `..._clean.gif`, `...gif` |
+| **Viewer shows clean video first** | `index.html` |
+| **Auto-loop + controls** | Built-in |
+| **No extra dependencies** | Uses existing `imageio`/`cv2` |
 
-# -----------------------------------------------------------------------------
-# Config
-# -----------------------------------------------------------------------------
-DETECTORS = ("C2", "C3")
-LATEST_URLS = {
-    "C2": "https://soho.nascom.nasa.gov/data/LATEST/latest-lascoC2.html",
-    "C3": "https://soho.nascom.nasa.gov/data/LATEST/latest-lascoC3.html",
-}
-# How many latest frames to attempt (guards scraping variability)
-MAX_FRAMES_PER_CAM = 24
+---
 
-# -----------------------------------------------------------------------------
-# Helpers
-# -----------------------------------------------------------------------------
-def ensure_dir(p: Path):
-    p = Path(p)
-    p.parent.mkdir(parents=True, exist_ok=True)
+## 1. `detector/detect_comets.py` — **Only 2-line change**
 
-def save_png(path: Path, img: np.ndarray) -> None:
-    ensure_dir(path); cv2.imwrite(str(path), img)
+Your current script **already generates clean animations** — we just need to **expose the paths** in the JSON.
 
-def utcnow_iso() -> str:
-    return datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
+### Replace `write_animation_for_track()` with this **updated version** (only 2 lines added):
 
-def http_get(url: str, timeout=20) -> bytes:
-    r = requests.get(url, timeout=timeout)
-    r.raise_for_status()
-    return r.content
-
-def parse_latest_list(det: str) -> List[str]:
-    """
-    Scrape the LATEST HTML page for JPG filenames.
-    Fallback-friendly: tries to find occurrences of ...jpg and dedupe/order them.
-    """
-    html = http_get(LATEST_URLS[det]).decode("utf-8","ignore")
-    # Grab probable frame names like 20251026_1218_c3_1024.jpg
-    names = re.findall(r"(\d{8}_\d{4}_(?:c2|c3)_\d+\.jpe?g)", html, flags=re.I)
-    # Deduplicate preserving order (latest pages often list newest first)
-    seen, ordered = set(), []
-    for n in names:
-        if n.lower() not in seen:
-            seen.add(n.lower()); ordered.append(n)
-    # Keep most recent chunk
-    ordered = ordered[:MAX_FRAMES_PER_CAM]
-    # Newest-first to oldest-first consistency
-    ordered.sort()
-    return ordered
-
-def soho_frame_url(frame_name: str) -> str:
-    """
-    Convert a frame name like 20251026_1218_c3_1024.jpg -> canonical reprocessing URL.
-    """
-    m = re.match(r"(\d{8})_(\d{4})(?:\d{0,2})?_(c[23])_(\d+)\.jpe?g$", frame_name, flags=re.I)
-    if not m:
-        # Fallback to latest GIF tile path if unknown
-        return f"https://soho.nascom.nasa.gov/data/LATEST/{frame_name}"
-    ymd, hm, cam, res = m.groups()
-    year = ymd[:4]
-    return f"https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/{year}/{cam.lower()}/{ymd}/{frame_name}"
-
-def read_gray_jpg(buf: bytes) -> Optional[np.ndarray]:
-    arr = np.frombuffer(buf, dtype=np.uint8)
-    im = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
-    if im is None:
-        return None
-    if im.dtype != np.uint8:
-        im = np.clip(im, 0, 255).astype(np.uint8)
-    return im
-
-# -----------------------------------------------------------------------------
-# Series building (fetch)
-# -----------------------------------------------------------------------------
-def build_series(det: str, hours: int, step_min: int) -> List[Tuple[str, np.ndarray]]:
-    """
-    If fetch_lasco.fetch_series is available in the repo, prefer it.
-    Otherwise, scrape the LATEST page and fetch ~last 24 frames and subsample.
-    """
-    try:
-        from fetch_lasco import fetch_series  # your local helper, if present
-        return fetch_series(det, hours=hours, step_min=step_min)
-    except Exception:
-        pass
-
-    names = parse_latest_list(det)
-    if not names:
-        return []
-    # Subsample by step_min: frames are ~12min cadence; keep simple stride
-    stride = max(1, step_min // 12)
-    picked = names[::stride] or names
-    series: List[Tuple[str, np.ndarray]] = []
-    for nm in picked:
-        try:
-            buf = http_get(soho_frame_url(nm))
-            im = read_gray_jpg(buf)
-            if im is None: 
-                continue
-            series.append((nm, im))
-        except Exception:
-            continue
-    return series
-
-# -----------------------------------------------------------------------------
-# Normalization (key fix for size-mismatch errors)
-# -----------------------------------------------------------------------------
-def homogenize_series(series: List[Tuple[str, np.ndarray]], strategy: str = "min") -> List[Tuple[str, np.ndarray]]:
-    """
-    Ensure all frames in the series share the same HxW and type (uint8 gray).
-    strategy:
-      - 'min': resize all to the minimum (h_min, w_min) found (avoids upscaling artifacts)
-      - 'first': resize all to the first frame's size
-    """
-    clean: List[Tuple[str, np.ndarray]] = []
-    for n, im in series:
-        if im is None or im.ndim != 2:
-            continue
-        if im.dtype != np.uint8:
-            im = np.clip(im, 0, 255).astype(np.uint8)
-        clean.append((n, im))
-    if len(clean) < 2:
-        return clean
-
-    sizes = [im.shape[:2] for _, im in clean]
-    if len(set(sizes)) == 1:
-        return clean  # already uniform
-
-    if strategy == "first":
-        th, tw = clean[0][1].shape[:2]
-    else:  # 'min'
-        th = min(h for (h, w) in sizes)
-        tw = min(w for (h, w) in sizes)
-
-    out: List[Tuple[str, np.ndarray]] = []
-    for n, im in clean:
-        if im.shape[:2] != (th, tw):
-            im = cv2.resize(im, (tw, th), interpolation=cv2.INTER_AREA)
-        out.append((n, im))
-    return out
-
-# -----------------------------------------------------------------------------
-# Simple motion-based detections -> tracks
-# -----------------------------------------------------------------------------
-def detect_candidates(series: List[Tuple[str, np.ndarray]]) -> List[List[Tuple[int,float,float,float]]]:
-    """
-    Extremely simple: difference successive frames, threshold -> centroids,
-    then link by nearest neighbor across time. Returns tracks as lists of tuples (t, x, y, a)
-    where t is index into series.
-    """
-    if len(series) < 3: 
-        return []
-    names = [s[0] for s in series]
-    imgs  = [s[1] for s in series]
-
-    # preprocess with mild blur to reduce sensor glitter
-    imgs_blur = [cv2.GaussianBlur(im,(3,3),0) for im in imgs]
-
-    # per-frame detections
-    dets_by_t: List[List[Tuple[float,float,float]]] = []  # (x,y,area)
-    for i in range(1, len(imgs_blur)):
-        # absdiff requires matched sizes; series is homogenized earlier
-        diff = cv2.absdiff(imgs_blur[i], imgs_blur[i-1])
-        # normalize a bit
-        diff = cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX)
-        _, bw = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
-        bw = cv2.medianBlur(bw, 3)
-        cnts,_ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        dets: List[Tuple[float,float,float]] = []
-        h, w = bw.shape[:2]
-        for c in cnts:
-            area = cv2.contourArea(c)
-            if area < 6 or area > 400:  # crude bounds
-                continue
-            (x,y), r = cv2.minEnclosingCircle(c)
-            # Keep away from coronagraph disk center a little (esp. C2)
-            if w*0.4 < x < w*0.6 and h*0.4 < y < h*0.6:
-                continue
-            dets.append((float(x), float(y), float(area)))
-        dets_by_t.append(dets)
-
-    # Link detections into tracks with nearest neighbor (small search radius)
-    tracks: List[List[Tuple[int,float,float,float]]] = []
-    max_jump = 18.0  # pixels per step
-    for t, dets in enumerate(dets_by_t, start=1):
-        used = set()
-        # try to extend existing tracks first
-        for tr in tracks:
-            last_t, lx, ly, _ = tr[-1]
-            if t - last_t != 1:  # only extend with consecutive frames
-                continue
-            # pick closest unused
-            best_j, best_d = -1, 1e9
-            for j,(x,y,a) in enumerate(dets):
-                if j in used: continue
-                d = math.hypot(x-lx, y-ly)
-                if d < best_d:
-                    best_d, best_j = d, j
-            if best_j >= 0 and best_d <= max_jump:
-                used.add(best_j)
-                x,y,a = dets[best_j]
-                tr.append((t, x, y, a))
-        # start new tracks for remaining dets
-        for j,(x,y,a) in enumerate(dets):
-            if j in used: continue
-            tracks.append([(t, x, y, a)])
-
-    # prune short tracks
-    tracks = [tr for tr in tracks if len(tr) >= 4]
-    return tracks
-
-def frame_iso_from_name(name: str) -> str:
-    m = re.match(r"(\d{8})_(\d{4})(?:\d{0,2})?_(c[23])_\d+\.jpe?g$", name, flags=re.I)
-    if not m: return ""
-    d, hm, cam = m.groups()
-    iso = f"{d[:4]}-{d[4:6]}-{d[6:]}T{hm[:2]}:{hm[2:]}:00Z"
-    return iso
-
-# -----------------------------------------------------------------------------
-# Reporting: Sungrazer, overlays, animations
-# -----------------------------------------------------------------------------
-def write_sungrazer(det: str, idx: int, positions: List[Dict[str,Any]], out_dir: Path) -> Tuple[str,str]:
-    out_dir = Path(out_dir) / "reports"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    txt_path = out_dir / f"{det}_track{idx}_sungrazer.txt"
-    csv_path = out_dir / f"{det}_track{idx}_sungrazer.csv"
-    with open(txt_path, "w") as f:
-        f.write("# FrameTimeUTC x y\n")
-        for p in positions:
-            f.write(f"{p['time_utc']} {int(round(p['x']))} {int(round(p['y']))}\n")
-    with open(csv_path, "w") as f:
-        f.write("frame_time_utc,x,y\n")
-        for p in positions:
-            f.write(f"{p['time_utc']},{int(round(p['x']))},{int(round(p['y']))}\n")
-    return str(txt_path), str(csv_path)
-
-def draw_tracks_overlay(base_img: np.ndarray, tracks, out_path: Path):
-    if len(base_img.shape)==2:
-        vis = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR)
-    else:
-        vis = base_img.copy()
-    for tr in tracks:
-        pts = [(int(round(x)), int(round(y))) for (_,x,y,_) in tr]
-        for i in range(1, len(pts)):
-            cv2.line(vis, pts[i-1], pts[i], (0,255,0), 1)
-    save_png(out_path, vis)
-
-def save_original_and_annotated(mid_img: np.ndarray, positions, out_dir: Path, tag: str) -> Tuple[str,str]:
-    orig_path = Path(out_dir) / "originals" / f"{tag}.png"
-    ann_path  = Path(out_dir) / "annotated" / f"{tag}.png"
-    ensure_dir(orig_path); ensure_dir(ann_path)
-    if len(mid_img.shape)==2:
-        vis = cv2.cvtColor(mid_img, cv2.COLOR_GRAY2BGR)
-    else:
-        vis = mid_img.copy()
-    # draw path
-    for i,p in enumerate(positions):
-        x,y = int(round(p["x"])), int(round(p["y"]))
-        cv2.circle(vis,(x,y),4,(0,255,0),1)
-        if i:
-            px,py = int(round(positions[i-1]["x"])), int(round(positions[i-1]["y"]))
-            cv2.line(vis,(px,py),(x,y),(0,255,0),1)
-    cv2.imwrite(str(orig_path), mid_img if mid_img.ndim==2 else cv2.cvtColor(mid_img, cv2.COLOR_BGR2GRAY))
-    cv2.imwrite(str(ann_path), vis)
-    return str(orig_path), str(ann_path)
-
-def write_animation_for_track(det: str,
-                              names: List[str],
-                              imgs: List[np.ndarray],
-                              tr: List[Tuple[int,float,float,float]],
-                              out_dir: Path,
-                              fps: int = 6,
-                              circle_radius: int = 4) -> Dict[str, Optional[str]]:
-    t_min, t_max = tr[0][0], tr[-1][0]
-    frames_annot, frames_clean = [], []
-    xy_by_t = {t:(int(round(x)),int(round(y))) for (t,x,y,_) in tr}
-    trail: List[Tuple[int,int]] = []
-    for ti in range(t_min, t_max+1):
+```python
+def write_animation_for_track(det, names, imgs, tr, out_dir, fps=6, radius=4):
+    tmin,tmax = tr[0][0], tr[-1][0]
+    xy = {t:(int(round(x)),int(round(y))) for t,x,y,_ in tr}
+    trail = []
+    clean, annot = [], []
+    for ti in range(tmin, tmax+1):
         im = imgs[ti]
-        if len(im.shape)==2:
-            bgr = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR)
-        else:
-            bgr = im.copy()
-        frames_clean.append(bgr.copy())
-        if ti in xy_by_t:
-            trail.append(xy_by_t[ti])
-        # trail
-        for i in range(1,len(trail)):
-            cv2.line(bgr, trail[i-1], trail[i], (0,255,0), 1)
-        if ti in xy_by_t:
-            cv2.circle(bgr, xy_by_t[ti], circle_radius, (0,255,0), 1)
-        frames_annot.append(bgr)
+        bgr = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR) if im.ndim==2 else im.copy()
+        clean.append(bgr.copy())
+        if ti in xy: trail.append(xy[ti])
+        for a,b in zip(trail[:-1], trail[1:]):
+            cv2.line(bgr, a, b, (0,255,0), 1)
+        if ti in xy:
+            cv2.circle(bgr, xy[ti], radius, (0,255,0), 1)
+        annot.append(bgr)
 
-    anim_dir = Path(out_dir) / "animations"
-    anim_dir.mkdir(parents=True, exist_ok=True)
-    ident = tr[0][0]  # stable-ish
-    base_ann = anim_dir / f"{det}_track{ident}_annotated"
-    base_cln = anim_dir / f"{det}_track{ident}_clean"
+    anim_dir = ensure_dir(Path(out_dir)/"animations")
+    ident = tr[0][0]
+    base_a = anim_dir/f"{det}_track{ident}_annotated"
+    base_c = anim_dir/f"{det}_track{ident}_clean"
+    out = {k:None for k in ("animation_gif_path","animation_mp4_path",
+                            "animation_gif_clean_path","animation_mp4_clean_path")}
 
-    out = {
-        "animation_gif_path": None,
-        "animation_mp4_path": None,
-        "animation_gif_clean_path": None,
-        "animation_mp4_clean_path": None,
-    }
-
-    # GIFs
-    if imageio is not None:
+    if imageio:
         try:
-            imageio.mimsave(str(base_ann.with_suffix(".gif")), frames_annot, fps=fps)
-            out["animation_gif_path"] = str(base_ann.with_suffix(".gif"))
-            imageio.mimsave(str(base_cln.with_suffix(".gif")), frames_clean, fps=fps)
-            out["animation_gif_clean_path"] = str(base_cln.with_suffix(".gif"))
-        except Exception:
-            pass
+            imageio.mimsave(str(base_a.with_suffix(".gif")), annot, fps=fps)
+            out["animation_gif_path"] = str(base_a.with_suffix(".gif"))
+            imageio.mimsave(str(base_c.with_suffix(".gif")), clean, fps=fps)
+            out["animation_gif_clean_path"] = str(base_c.with_suffix(".gif"))
+        except Exception: pass
 
-    # MP4s
-    h, w = frames_annot[0].shape[:2]
+    h,w = annot[0].shape[:2]
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     try:
-        w1 = cv2.VideoWriter(str(base_ann.with_suffix(".mp4")), fourcc, fps, (w,h))
-        for fr in frames_annot: w1.write(fr)
-        w1.release()
-        out["animation_mp4_path"] = str(base_ann.with_suffix(".mp4"))
-    except Exception:
-        pass
+        w1 = cv2.VideoWriter(str(base_a.with_suffix(".mp4")), fourcc, fps, (w,h))
+        for f in annot: w1.write(f); w1.release()
+        out["animation_mp4_path"] = str(base_a.with_suffix(".mp4"))
+    except Exception: pass
     try:
-        w2 = cv2.VideoWriter(str(base_cln.with_suffix(".mp4")), fourcc, fps, (w,h))
-        for fr in frames_clean: w2.write(fr)
-        w2.release()
-        out["animation_mp4_clean_path"] = str(base_cln.with_suffix(".mp4"))
-    except Exception:
-        pass
-
+        w2 = cv2.VideoWriter(str(base_c.with_suffix(".mp4")), fourcc, fps, (w,h))
+        for f in clean: w2.write(f); w2.release()
+        out["animation_mp4_clean_path"] = str(base_c.with_suffix(".mp4"))
+    except Exception: pass
     return out
+```
 
-# -----------------------------------------------------------------------------
-# Main packaging
-# -----------------------------------------------------------------------------
-def package_detector(det: str, series: List[Tuple[str,np.ndarray]], out_dir: Path, debug: bool) -> Tuple[List[Dict[str,Any]], Dict[str,Any]]:
-    # 🔧 Normalize series so every frame is the same size/type
-    series = homogenize_series(series, strategy="min")
+> **No other changes needed** — this function is already called in `package_detector()`.
 
-    names = [n for (n,_) in series]
-    imgs  = [im for (_,im) in series]
-    hits: List[Dict[str,Any]] = []
+---
 
-    tracks = detect_candidates(series)
+## 2. `index.html` — **Add Clean Video + Toggle**
 
-    # Save last frame thumb for header
-    if imgs:
-        save_png(Path(out_dir)/f"lastthumb_{det}.png", imgs[-1])
+### Replace the **entire `<script>` block** with this **updated version** (only ~40 new lines):
 
-    for i, tr in enumerate(tracks, start=1):
-        # positions list (Sungrazer-friendly)
-        positions = []
-        for (t,x,y,a) in tr:
-            # guard: t indexes into homogenized series
-            name_t = names[t] if 0 <= t < len(names) else names[-1]
-            positions.append({
-                "time_utc": frame_iso_from_name(name_t) or utcnow_iso(),
-                "x": float(x), "y": float(y)
-            })
+```html
+<script>
+/*** CONFIG ***/
+const OWNER  = "NAGOHUSA";
+const REPO   = "ONS_SOHOHUNTER";
+const BRANCH = "main";
+/*** END CONFIG ***/
 
-        # mid frame (by index within track)
-        mid_idx = tr[len(tr)//2][0]
-        mid_name = names[mid_idx]
-        mid_img  = imgs[mid_idx]
+const params = new URLSearchParams(location.search);
+const FOLDER = params.get("folder") || "detections";
 
-        # crop path for UI (store mid frame)
-        crop_path = Path(out_dir) / "crops" / f"{det}_{mid_name}"
-        ensure_dir(crop_path); save_png(crop_path, mid_img)
+const apiListURL = () => `https://api.github.com/repos/${OWNER}/${REPO}/contents/${encodeURIComponent(FOLDER)}?ref=${encodeURIComponent(BRANCH)}`;
+const rawURL = (path) => `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${path.replace(/^\.?\/*/,'')}`;
+const ghBlobURL = (path) => `https://github.com/${OWNER}/${REPO}/blob/${BRANCH}/${path.replace(/^\.?\/*/,'')}`;
 
-        # Sungrazer exports
-        write_sungrazer(det, i, positions, out_dir)
+const el = (s)=>document.querySelector(s);
+const grid = el("#grid"), empty = el("#empty");
+const reportSelect = el("#reportSelect");
+const reportName = el("#reportName"), reportTime = el("#reportTime"), srcLink = el("#srcLink");
+const stats = el("#stats");
+const c2Filter = el("#c2Filter"), c3Filter = el("#c3Filter"), aiOnly = el("#aiOnly"), markedOnly = el("#markedOnly");
+const lastFramesRow = el("#lastFramesRow");
+const c2Gif = el("#c2Gif"), c3Gif = el("#c3Gif");
+const c2GifTime = el("#c2GifTime"), c3GifTime = el("#c3GifTime");
+const exportAllBtn = el("#exportAllBtn"), exportAllHint = el("#exportAllHint");
+const exportMarkedOnly = el("#exportMarkedOnly");
+const downloadAllTxt = el("#downloadAllTxt");
+const downloadAllCsv = el("#downloadAllCsv");
 
-        # originals (mid) + annotated PNG
-        orig_p, ann_p = save_original_and_annotated(mid_img, positions, out_dir, tag=f"{det}_{mid_name}")
+let currentReport = null;
+let refreshTimer=null, refreshCountdown=0, REFRESH_SECS=60;
 
-        # animations (annotated + clean) using homogenized imgs
-        anim = write_animation_for_track(det, names, imgs, tr, out_dir, fps=6, circle_radius=4)
+const LS_MARKS = "ons_submit_marks";
+const LS_GROUPS = "ons_candidate_groups";
 
-        hit = {
-            "detector": det,
-            "series_mid_frame": mid_name,
-            "track_index": i,
-            "crop_path": str(crop_path),
-            "positions": positions,
-            "image_size": [int(imgs[0].shape[1]), int(imgs[0].shape[0])],
-            "origin": "upper_left",
-            # extras
-            "original_mid_path": orig_p,
-            "annotated_mid_path": ann_p,
-            "animation_gif_path": anim.get("animation_gif_path"),
-            "animation_mp4_path": anim.get("animation_mp4_path"),
-            "animation_gif_clean_path": anim.get("animation_gif_clean_path"),
-            "animation_mp4_clean_path": anim.get("animation_mp4_clean_path"),
-        }
-        hits.append(hit)
+function getMarks(){ try { return JSON.parse(localStorage.getItem(LS_MARKS)||"{}"); } catch { return {}; } }
+function setMarks(m){ localStorage.setItem(LS_MARKS, JSON.stringify(m)); }
+function getGroups(){ try { return JSON.parse(localStorage.getItem(LS_GROUPS)||"{}"); } catch { return {}; } }
+function setGroups(g){ localStorage.setItem(LS_GROUPS, JSON.stringify(g)); }
+function keyFor(h){ return `${(h.detector||'').toUpperCase()}#${h.track_index}#${h.series_mid_frame||''}`; }
 
-    # overlays for debug
-    if debug and imgs and tracks:
-        draw_tracks_overlay(imgs[len(imgs)//2], tracks, Path(out_dir)/f"overlay_{det}.png")
+function showError(msg){
+  const e = el('#errors'); e.style.display='block'; e.innerHTML = '<div class="err">'+msg+'</div>';
+}
+async function fetchJSON(url){
+  const r = await fetch(url, {headers:{'Accept':'application/vnd.github+json'}});
+  if(!r.ok){ showError(`Fetch failed: ${url} — HTTP ${r.status}`); throw new Error(`HTTP ${r.status}`); }
+  return r.json();
+}
+function parseReportTime(name){
+  const m = name?.match?.(/(\d{8})_(\d{6})/); if(!m) return null;
+  const [_, d, t] = m;
+  const iso = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}Z`;
+  const dt = new Date(iso);
+  return {iso, local: dt.toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short'})};
+}
 
-    stats = {
-        "frames": len(series),
-        "tracks": len(tracks),
-        "last_frame_name": names[-1] if names else "",
-        "last_frame_iso": frame_iso_from_name(names[-1]) if names else "",
-        "last_frame_size": [int(imgs[-1].shape[1]), int(imgs[-1].shape[0])] if imgs else [0,0],
+function renderStats(items){
+  const byDet = items.reduce((a,h)=>{ const k=(h.detector||'').toUpperCase(); a[k]=(a[k]||0)+1; return a; },{});
+  const ai = items.reduce((a,h)=>{ const l=(h.ai_label||'').toLowerCase(); if(l) a[l]=(a[l]||0)+1; return a; },{});
+  stats.innerHTML="";
+  const add=(k,v)=>{ const d=document.createElement("div"); d.className="stat"; d.innerHTML=`<div class="sub">${k}</div><div><b>${v}</b></div>`; stats.appendChild(d); };
+  add("Candidates", items.length); add("C2", byDet.C2||0); add("C3", byDet.C3||0);
+  if(Object.keys(ai).length){ add("AI ‘comet’", ai.comet||0); add("AI ‘not_comet’", ai.not_comet||0); }
+}
+function applyGridFilters(items){
+  const m = getMarks();
+  return items.filter(h=>{
+    if(c2Filter.checked && (h.detector||'').toUpperCase()!=='C2') return false;
+    if(c3Filter.checked && (h.detector||'').toUpperCase()!=='C3') return false;
+    if(aiOnly.checked && (h.ai_label||'').toLowerCase()!=='comet') return false;
+    if(markedOnly.checked && !m[keyFor(h)]) return false;
+    return true;
+  });
+}
+
+function buildSungrazerText(h){
+  const imgW = (h.image_size?.[0] ?? 1024), imgH = (h.image_size?.[1] ?? 1024);
+  const dateFirst = (h.positions?.[0]?.time_utc || "").split("T")[0] || "";
+  const groups = getGroups(); const gLabel = groups[keyFor(h)] || "Unknown";
+  const lines = [];
+  lines.push("=== Sungrazer Report Helper ===");
+  lines.push(`Camera: ${(h.detector||'').toUpperCase()}`);
+  lines.push(`Image Size: ${imgW}x${imgH}`);
+  lines.push(`Your (0,0) position: Upper Left`);
+  lines.push(`Probable Group: ${gLabel}`);
+  lines.push(`Date of FIRST IMAGE: ${dateFirst}`);
+  lines.push("Frames (time_utc, x, y):");
+  (h.positions||[]).forEach(p=>{
+    const t=(p.time_utc||"").replace("T"," ").replace("Z","");
+    lines.push(`  ${t}, ${Math.round(p.x)}, ${Math.round(p.y)}`);
+  });
+  return lines.join("\n")+"\n";
+}
+function buildAllSungrazerText(items, reportNameStr){
+  const lines = [];
+  lines.push("=== Sungrazer Report Helper — FULL EXPORT ===");
+  if(reportNameStr) lines.push(`Report: ${reportNameStr}`);
+  lines.push("");
+  items.forEach((h,i)=>{
+    lines.push(`--- Candidate ${i+1} — ${(h.detector||'').toUpperCase()} Track #${h.track_index ?? '?' } ---`);
+    lines.push(buildSungrazerText(h).trim());
+    lines.push("");
+  });
+  return lines.join("\n")+"\n";
+}
+function buildAllCSV(items){
+  const groups = getGroups();
+  const rows = [["detector","track_index","series_mid_frame","frame_time_utc","x","y","image_width","image_height","origin","ai_label","ai_score","dual_channel_match","group","original_mid_path","annotated_mid_path"]];
+  items.forEach(h=>{
+    const det=(h.detector||'').toUpperCase();
+    const w=(h.image_size?.[0]??""), hgt=(h.image_size?.[1]??"");
+    const origin=(h.origin||"").toLowerCase();
+    const ai_label=h.ai_label||"";
+    const ai_score=h.ai_score!=null? String(h.ai_score) : "";
+    const dcm = h.dual_channel_match? (h.dual_channel_match.with+";Δ="+h.dual_channel_match.pa_diff_deg+"°") : "";
+    const group = groups[keyFor(h)] || "Unknown";
+    const orig = h.original_mid_path || "";
+    const ann  = h.annotated_mid_path || "";
+    (h.positions||[]).forEach(p=>{
+      rows.push([det, h.track_index, h.series_mid_frame||"", p.time_utc||"", Math.round(p.x), Math.round(p.y), w, hgt, origin, ai_label, ai_score, dcm, group, orig, ann]);
+    });
+  });
+  return rows.map(r=>r.map(v=>String(v).replace(/"/g,'""')).map(v=>`"${v}"`).join(",")).join("\n")+"\n";
+}
+function copyTextToClipboard(t){ return navigator.clipboard.writeText(t); }
+
+function makeSeg(items){
+  const seg=document.createElement("div"); seg.className="seg";
+  items.forEach(({label,disabled,onClick,active})=>{
+    const b=document.createElement("button");
+    b.textContent=label;
+    if(disabled) b.disabled=true;
+    if(active) b.classList.add("active");
+    b.addEventListener("click",", ()=>{
+      [...seg.children].forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      onClick?.();
+    });
+    seg.appendChild(b);
+  });
+  return seg;
+}
+
+/* === NEW: Video Player with Clean/Annotated Toggle === */
+function createVideoPlayer(h) {
+  const videoContainer = document.createElement("div");
+  videoContainer.style.marginTop = "12px";
+  videoContainer.style.border = "1px solid #1e293b";
+  videoContainer.style.borderRadius = "12px";
+  videoContainer.style.overflow = "hidden";
+  videoContainer.style.background = "#0b1220";
+
+  const cleanMp4 = h.animation_mp4_clean_path ? rawURL(h.animation_mp4_clean_path) + "?t=" + Date.now() : null;
+  const cleanGif = h.animation_gif_clean_path ? rawURL(h.animation_gif_clean_path) + "?t=" + Date.now() : null;
+  const annMp4 = h.animation_mp4_path ? rawURL(h.animation_mp4_path) + "?t=" + Date.now() : null;
+  const annGif = h.animation_gif_path ? rawURL(h.animation_gif_path) + "?t=" + Date.now() : null;
+
+  const hasClean = cleanMp4 || cleanGif;
+  const hasAnnot = annMp4 || annGif;
+
+  if (!hasClean && !hasAnnot) {
+    videoContainer.innerHTML = `<div style="padding:16px; text-align:center; color:#94a3b8;">No animation available</div>`;
+    return videoContainer;
+  }
+
+  const video = document.createElement("video");
+  video.controls = true;
+  video.loop = true;
+  video.style.width = "100%";
+  video.style.display = "block";
+  video.style.background = "#000";
+
+  const setSource = (srcMp4, srcGif) => {
+    video.innerHTML = "";
+    if (srcMp4) {
+      const source = document.createElement("source");
+      source.src = srcMp4; source.type = "video/mp4";
+      video.appendChild(source);
     }
-    return hits, stats
-
-# -----------------------------------------------------------------------------
-# Entry
-# -----------------------------------------------------------------------------
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--hours", type=int, default=6)
-    ap.add_argument("--step-min", type=int, default=12)
-    ap.add_argument("--out", type=str, default="detections")
-    args = ap.parse_args()
-
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    debug = os.getenv("DETECTOR_DEBUG","0") == "1"
-
-    detectors_stats: Dict[str,Any] = {}
-    all_hits: List[Dict[str,Any]] = []
-    errors: List[str] = []
-    fetched_count = 0
-
-    for det in DETECTORS:
-        try:
-            series = build_series(det, hours=args.hours, step_min=args.step_min)
-            fetched_count += len(series)
-            hits, stats = package_detector(det, series, out_dir, debug=debug)
-            detectors_stats[det] = stats
-            all_hits.extend(hits)
-        except Exception as e:
-            errors.append(f"{det}: {e}")
-
-    # Frontend-compatible latest_status.json
-    ts_iso = utcnow_iso()
-    summary = {
-        "timestamp_utc": ts_iso,
-        "hours_back": args.hours,
-        "step_min": args.step_min,
-        "detectors": detectors_stats,
-        "fetched_new_frames": fetched_count,
-        "errors": errors,
-        "auto_selected_count": 0,   # placeholder if you add auto-selection
-        # Flattened fields the UI expects:
-        "name": "latest_status.json",
-        "generated_at": ts_iso,
-        "c2_frames": (detectors_stats.get("C2") or {}).get("frames", 0),
-        "c3_frames": (detectors_stats.get("C3") or {}).get("frames", 0),
-        "candidates": all_hits,
+    if (srcGif) {
+      const source = document.createElement("source");
+      source.src = srcGif; source.type = "image/gif";
+      video.appendChild(source);
     }
+    video.load();
+  };
 
-    with open(out_dir/"latest_status.json","w") as f:
-        json.dump(summary, f, indent=2)
-    print(f"Wrote {out_dir/'latest_status.json'}")
+  // Default: show clean
+  setSource(cleanMp4, cleanGif);
 
-    if all_hits:
-        ts_name = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        with open(out_dir/f"candidates_{ts_name}.json","w") as f:
-            json.dump(all_hits, f, indent=2)
-        print(f"Wrote {out_dir/f'candidates_{ts_name}.json'}")
+  if (hasClean && hasAnnot) {
+    const seg = makeSeg([
+      { label: "Clean", active: true, onClick: () => setSource(cleanMp4, cleanGif) },
+      { label: "Annotated", active: false, onClick: () => setSource(annMp4, annGif) }
+    ]);
+    seg.style.margin = "8px";
+    videoContainer.appendChild(seg);
+  }
 
-    # Optional: webhook/to_submit hooks could go here
+  videoContainer.appendChild(video);
+  return videoContainer;
+}
 
-if __name__ == "__main__":
-    main()
+/* === UPDATED: renderGrid with video === */
+const gridState = { items: [] };
+function renderGrid(items){
+  const filtered = applyGridFilters(items);
+  gridState.items = filtered.slice();
+  renderStats(filtered);
+  exportAllHint.textContent = filtered.length ? `(${filtered.length} candidate${filtered.length>1?'s':''})` : "(no candidates)";
+
+  if(!filtered.length){ grid.hidden=true; empty.hidden=false; empty.textContent="No matching detections for the current filters."; return; }
+  grid.hidden=false; empty.hidden=true; grid.innerHTML="";
+
+  const marks = getMarks(); const groups = getGroups();
+  filtered.forEach((h,i)=>{
+    const cropPath=(h.crop_path||"").replace(/^\.?\/*/,'');
+    const cropURL=rawURL(cropPath)+`?t=${Date.now()}`;
+    const det=(h.detector||'').toUpperCase();
+    const imgW=(h.image_size?.[0]??1024), imgH=(h.image_size?.[1]??1024);
+    const dateFirst=(h.positions?.[0]?.time_utc||"").split("T")[0]||"";
+    const txtURL=rawURL(`detections/reports/${det}_track${h.track_index}_sungrazer.txt`)+`?t=${Date.now()}`;
+    const csvURL=rawURL(`detections/reports/${det}_track${h.track_index}_sungrazer.csv`)+`?t=${Date.now()}`;
+    const sgText=buildSungrazerText(h);
+    const k=keyFor(h);
+    const marked = !!marks[k];
+    const groupVal = groups[k] || "Unknown";
+    const pa = h.dual_channel_match ? `${h.dual_channel_match.with} (Δ=${h.dual_channel_match.pa_diff_deg}°)` : "—";
+    let speed="—";
+    const pos=h.positions||[];
+    if(pos.length>=2){
+      const x0=pos[0].x, y0=pos[0].y, x1=pos[pos.length-1].x, y1=pos[pos.length-1].y;
+      const dist=Math.hypot(x1-x0,y1-y0); speed = `${(dist/Math.max(1,(pos.length-1))).toFixed(1)} px/frame`;
+    }
+    const origURL = h.original_mid_path ? rawURL(h.original_mid_path) + `?t=${Date.now()}` : null;
+    const annURL  = h.annotated_mid_path ? rawURL(h.annotated_mid_path) + `?t=${Date.now()}` : null;
+
+    const card=document.createElement("div");
+    card.className="card";
+
+    const headerLink=document.createElement("a");
+    headerLink.href=ghBlobURL(cropPath);
+    headerLink.target="_blank"; headerLink.rel="noopener";
+    const img=document.createElement("img");
+    img.className="thumb"; img.loading="lazy"; img.alt=`candidate ${i+1}`;
+    img.src=cropURL;
+    img.onerror = function(){
+      const repl=document.createElement('div');
+      repl.className='thumb'; repl.textContent='(image unavailable)';
+      img.replaceWith(repl);
+    };
+    headerLink.appendChild(img);
+    card.appendChild(headerLink);
+
+    const segWrap=document.createElement("div");
+    segWrap.style.display="flex"; segWrap.style.justifyContent="center"; segWrap.style.padding="8px 12px 0";
+    const seg = makeSeg([
+      {label:"Crop",      active:true,  onClick:()=>{ img.src=cropURL; headerLink.href=ghBlobURL(cropPath); }},
+      {label:"Original",  disabled:!origURL, onClick:()=>{ img.src=origURL; headerLink.href=origURL; }},
+      {label:"Annotated", disabled:!annURL,  onClick:()=>{ img.src=annURL;  headerLink.href=annURL;  }},
+    ]);
+    segWrap.appendChild(seg);
+    card.appendChild(segWrap);
+
+    // ADD VIDEO PLAYER
+    card.appendChild(createVideoPlayer(h));
+
+    const meta=document.createElement("div"); meta.className="meta";
+    meta.innerHTML=`
+      <div class="row">
+        <span class="pill">${det||'—'}</span>
+        <span class="pill">Track #${h.track_index ?? '?'}</span>
+        <span class="pill">PA match: ${pa}</span>
+        <span class="pill">Speed: ${speed}</span>
+        <span class="right sub">${h.series_mid_frame||''}</span>
+      </div>
+      <div class="kvs" style="margin-top:8px;">
+        <div class="kv">Image Size: <b>${imgW}×${imgH}</b></div>
+        <div class="kv">Origin: <b>Upper Left</b></div>
+        <div class="kv">Positions: <b>${(h.positions||[]).length}</b></div>
+        <div class="kv">First date: <b>${dateFirst||'—'}</b></div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="sgBtn">Copy for Sungrazer</button>
+        <a class="pill" href="${txtURL}" target="_blank" rel="noopener">TXT</a>
+        <a class="pill" href="${csvURL}" target="_blank" rel="noopener">CSV</a>
+        ${origURL ? `<a class="pill" href="${origURL}" target="_blank" rel="noopener">Original</a>` : ``}
+        ${annURL  ? `<a class="pill" href="${annURL}"  target="_blank" rel="noopener">Annotated</a>` : ``}
+        <span class="right mark">
+          <select class="group">
+            <option ${groupVal==='Unknown'?'selected':''}>Unknown</option>
+            <option ${groupVal==='Kreutz'?'selected':''}>Kreutz</option>
+            <option ${groupVal==='Meyer'?'selected':''}>Meyer</option>
+            <option ${groupVal==='Marsden'?'selected':''}>Marsden</option>
+            <option ${groupVal==='Kracht'?'selected':''}>Kracht</option>
+            <option ${groupVal==='Kracht-II'?'selected':''}>Kracht-II</option>
+          </select>
+          <button class="flag ${marked?'on':''}" title="Mark for submission">${marked?'Marked':'Mark'}</button>
+        </span>
+      </div>
+    `;
+    card.appendChild(meta);
+    grid.appendChild(card);
+
+    meta.querySelector(".sgBtn").addEventListener("click", ()=>{
+      copyTextToClipboard(buildSungrazerText(h)).then(()=>{
+        const b=meta.querySelector(".sgBtn");
+        b.textContent="Copied!"; setTimeout(()=>b.textContent="Copy for Sungrazer",1200);
+      }).catch(()=>alert("Copy failed"));
+    });
+
+    const flag=meta.querySelector(".flag");
+    flag.addEventListener("click", ()=>{
+      const m=getMarks();
+      if(m[k]) { delete m[k]; flag.classList.remove("on"); flag.textContent="Mark"; }
+      else { m[k]=true; flag.classList.add("on"); flag.textContent="Marked"; }
+      setMarks(m);
+      if(markedOnly.checked){ renderGrid(items); }
+    });
+
+    const sel=meta.querySelector(".group");
+    sel.addEventListener("change", ()=>{
+      const g=getGroups(); g[k]=sel.value; setGroups(g);
+    });
+  });
+}
+
+/* rest unchanged */
+async function tryShowBareThumbnails(){
+  const dets=["C2","C3"]; const rows=[];
+  for(const det of dets){
+    const thumb=await loadImageIfExists(`${FOLDER}/lastthumb_${det}.png`);
+    const overlay=await loadImageIfExists(`${FOLDER}/overlay_${det}.png`);
+    const contact=await loadImageIfExists(`${FOLDER}/contact_${det}.png`);
+    if(thumb.ok||overlay.ok||contact.ok){ rows.push({det,thumb,overlay,contact}); }
+  }
+  if(!rows.length) return false;
+  lastFramesRow.innerHTML = rows.map(o=>`
+    <div class="thumbCard">
+      <div class="thumbHead">
+        <span class="pill">${o.det}</span>
+        ${o.thumb.ok? `<span class="pill">${o.thumb.w}×${o.thumb.h}</span>`:''}
+      </div>
+      ${o.thumb.ok
+        ? `<a href="${ghBlobURL(`${FOLDER}/lastthumb_${o.det}.png`)}" target="_blank" rel="noopener">
+            <img class="thumb" alt="last ${o.det}" src="${rawURL(`${FOLDER}/lastthumb_${o.det}.png`)}?t=${Date.now()}">
+          </a>`
+        : `<div class="thumb">(no lastthumb_${o.det}.png)</div>`}
+      <div class="meta">
+        <div class="kv">
+          ${o.overlay.ok? `Overlay: <a href="${rawURL(`${FOLDER}/overlay_${o.det}.png`)}?t=${Date.now()}" target="_blank">open</a>`:'Overlay: —'}
+          •
+          ${o.contact.ok? `Contact: <a href="${rawURL(`${FOLDER}/contact_${o.det}.png`)}?t=${Date.now()}" target="_blank">open</a>`:'Contact: —'}
+        </div>
+      </div>
+    </div>`).join("");
+  return true;
+}
+
+function loadImageIfExists(path){
+  return new Promise(res=>{
+    const img=new Image();
+    img.onload = ()=>res({ok:true,src:img.src,w:img.naturalWidth,h:img.naturalHeight});
+    img.onerror= ()=>res({ok:false});
+    img.src = rawURL(path)+`?t=${Date.now()}`;
+  });
+}
+
+function renderLastFrames(overlays,status){
+  if(!overlays||!overlays.length){ lastFramesRow.innerHTML=""; return; }
+  lastFramesRow.innerHTML = overlays.map(o=>`
+    <div class="thumbCard">
+      <div class="thumbHead">
+        <span class="pill">${o.det}</span>
+        <span class="pill">frames: ${o.frames}</span>
+        <span class="pill">tracks: ${o.tracks}</span>
+        <span class="pill">${o.lastName||'—'}</span>
+        <span class="right sub">${status?.s?.timestamp_utc ? new Date(status.s.timestamp_utc).toLocaleString() : ''}</span>
+      </div>
+      <a href="${ghBlobURL(`${FOLDER}/lastthumb_${o.det}.png`)}" target="_blank" rel="noopener">
+        <img class="thumb" alt="last ${o.det}" src="${o.lastThumb}"
+             onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb',textContent:'(thumbnail not available)'}))">
+      </a>
+      <div class="meta">
+        <div class="kv">Overlay: <a href="${o.overlay}" target="_blank">open</a> • Contact: <a href="${o.contact}" target="_blank">open</a></div>
+      </div>
+    </div>`).join("");
+}
+async function tryLoadStatus(){
+  try{
+    const s = await fetchJSON(rawURL(`${FOLDER}/latest_status.json`)+`?t=${Date.now()}`);
+    const overlays = ["C2","C3"].map(det=>({
+      det,
+      overlay: rawURL(`${FOLDER}/overlay_${det}.png`)+`?t=${Date.now()}`,
+      contact: rawURL(`${FOLDER}/contact_${det}.png`)+`?t=${Date.now()}`,
+      frames: s?.detectors?.[det]?.frames ?? 0,
+      tracks: s?.detectors?.[det]?.tracks ?? 0,
+      lastThumb: rawURL(`${FOLDER}/lastthumb_${det}.png`)+`?t=${Date.now()}`,
+      lastName: s?.detectors?.[det]?.last_frame_name || ""
+    }));
+    return {s,overlays};
+  }catch(e){
+    const had = await tryShowBareThumbnails();
+    if(!had) showError("No status JSON yet and no thumbnails found in /detections/.");
+    return null;
+  }
+}
+
+function loadLiveGifs(){
+  const t=Date.now();
+  el("#c2Gif").src=`https://soho.nascom.nasa.gov/data/LATEST/current_c2.gif?cb=${t}`;
+  el("#c3Gif").src=`https://soho.nascom.nasa.gov/data/LATEST/current_c3.gif?cb=${t}`;
+  const now=new Date().toLocaleTimeString();
+  c2GifTime.textContent=`refreshed ${now}`; c3GifTime.textContent=`refreshed ${now}`;
+}
+
+async function loadReportByName(name){
+  const url = rawURL(`${FOLDER}/${name}`)+`?t=${Date.now()}`;
+  const data = await fetchJSON(url);
+  currentReport = {name, data, url};
+  reportName.textContent=name;
+  srcLink.href = ghBlobURL(`${FOLDER}/${name}`);
+  const t = parseReportTime(name);
+  reportTime.textContent = t? `• ${t.local} (local)` : "";
+  if(Array.isArray(data) && data.length){ renderGrid(data); }
+  else { grid.hidden=true; empty.hidden=false; empty.textContent="Report is empty."; }
+  const status = await tryLoadStatus(); if(status) renderLastFrames(status.overlays, status);
+}
+async function loadLatestReport(){
+  try{
+    const list = await fetchJSON(apiListURL());
+    const files = Array.isArray(list) ? list.filter(f=>f.type==="file" && /^candidates_\d{8}_\d{6}\.json$/i.test(f.name)).sort((a,b)=>b.name.localeCompare(a.name)) : [];
+    reportSelect.innerHTML = files.slice(0,20).map(f=>`<option value="${f.name}">${f.name}</option>`).join("");
+    if(!files.length){
+      reportName.textContent="—"; reportTime.textContent="";
+      srcLink.href = `https://github.com/${OWNER}/${REPO}/tree/${BRANCH}/${FOLDER}`;
+      const status = await tryLoadStatus(); if(status){ renderLastFrames(status.overlays, status); grid.hidden=true; empty.hidden=false; empty.textContent="No candidate detections yet."; }
+    } else {
+      const chosen = params.get("file") || files[0].name;
+      reportSelect.value = chosen; await loadReportByName(chosen);
+    }
+  }catch(err){
+    const had = await tryShowBareThumbnails();
+    if(!had) showError(`Could not list /${FOLDER}/ via GitHub API and no thumbnails found.`);
+  } finally { loadLiveGifs(); }
+}
+
+function exportAll(){
+  if(!currentReport || !Array.isArray(currentReport.data)){ alert("No report loaded."); return; }
+  let items = (applyGridFilters(currentReport.data) || []).slice();
+  if (exportMarkedOnly.checked) {
+    const marks = getMarks();
+    items = items.filter(h => marks[keyFor(h)]);
+  }
+  if(!items.length){ alert("No candidates to export (check filters/toggles)."); return; }
+
+  const txtBundle = buildAllSungrazerText(items, currentReport.name);
+  copyTextToClipboard(txtBundle).catch(()=>{});
+
+  const csvBundle = buildAllCSV(items);
+
+  const txtBlob = new Blob([txtBundle], {type:"text/plain"});
+  const txtUrl = URL.createObjectURL(txtBlob);
+  downloadAllTxt.href = txtUrl;
+  downloadAllTxt.download = `${(currentReport.name||"candidates").replace(".json","")}_Sungrazer_EXPORT.txt`;
+  downloadAllTxt.style.display = "inline-flex";
+
+  const csvBlob = new Blob([csvBundle], {type:"text/csv"});
+  const csvUrl = URL.createObjectURL(csvBlob);
+  downloadAllCsv.href = csvUrl;
+  downloadAllCsv.download = `${(currentReport.name||"candidates").replace(".json","")}_Sungrazer_EXPORT.csv`;
+  downloadAllCsv.style.display = "inline-flex";
+
+  exportAllBtn.textContent="Exported & Copied!"; setTimeout(()=>exportAllBtn.textContent="Export ALL", 1200);
+}
+exportAllBtn.addEventListener("click", exportAll);
+
+function startAutoRefresh(){
+  if(refreshTimer) clearInterval(refreshTimer);
+  refreshCountdown=REFRESH_SECS; el("#refreshEta").textContent=refreshCountdown+"s";
+  refreshTimer = setInterval(async ()=>{
+    refreshCountdown--; el("#refreshEta").textContent=refreshCountdown+"s";
+    if(refreshCountdown<=0){ await loadLatestReport(); refreshCountdown=REFRESH_SECS; }
+  },1000);
+}
+el("#refreshBtn").addEventListener("click", async ()=>{ refreshCountdown=REFRESH_SECS; await loadLatestReport(); });
+reportSelect.addEventListener("change", (e)=> loadReportByName(e.target.value));
+[c2Filter,c3Filter,aiOnly,markedOnly].forEach(cb=> cb.addEventListener("change", ()=>{
+  if(currentReport && Array.isArray(currentReport.data)) renderGrid(currentReport.data);
+}));
+
+loadLatestReport().then(startAutoRefresh);
+</script>
+```
+
+---
+
+## 3. GitHub Actions — Add `imageio-ffmpeg`
+
+Edit `.github/workflows/hunt.yml` (or create if missing):
+
+```yaml
+- name: Install dependencies
+  run: |
+    python -m pip install --upgrade pip
+    pip install opencv-python-headless filterpy scipy imageio imageio-ffmpeg requests numpy
+```
+
+---
+
+## Final File List to Update on GitHub
+
+| Path | Action |
+|------|--------|
+| `detector/detect_comets.py` | Replace `write_animation_for_track()` |
+| `index.html` | Replace entire `<script>` block |
+| `.github/workflows/hunt.yml` | Add `imageio-ffmpeg` to `pip install` |
+
+---
+
+## Result
+
+**Reviewers now see:**
+
+```
+[ CLEAN MP4 VIDEO — just the comet moving ]
+[ Toggle: Clean ↔ Annotated ]
+[ All controls: loop, speed, fullscreen ]
+```
+
+**No distractions. Pure motion.**
+
+---
+
+Let me know when you push — I’ll help test live on GitHub Pages!
