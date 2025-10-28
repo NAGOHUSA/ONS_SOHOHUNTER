@@ -1,13 +1,13 @@
 {
-  "timestamp_utc": "2025-10-28T17:48:38.944695Z",
+  "timestamp_utc": "2025-10-28T18:51:51.141208Z",
   "detectors": {
     "C2": {
-      "frames": 0,
-      "tracks": 0
+      "frames": 30,
+      "tracks": 3
     },
     "C3": {
-      "frames": 0,
-      "tracks": 0
+      "frames": 30,
+      "tracks": 3
     }
   }
 }
