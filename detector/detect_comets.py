@@ -11,7 +11,6 @@ import os
 import sys
 import cv2
 import numpy as np
-import requests
 from pathlib import Path
 from datetime import datetime
 import imageio
@@ -240,18 +239,66 @@ def match_dual_channel(c2_cands, c3_cands):
                 continue
 
             dt = abs((t3 - t2).total_seconds() / 60)
-            if dt > 60:  # DUAL_MAX_MINUTES
+            if dt > 60:
                 continue
 
             pa2 = np.arctan2(c2["positions"][-1]["y"] - 256, c2["positions"][-1]["x"] - 256) * 180 / np.pi
             pa3 = np.arctan2(c3["positions"][0]["y"] - 512, c3["positions"][0]["x"] - 512) * 180 / np.pi
             diff = min(abs(pa2 - pa3), 360 - abs(pa2 - pa3))
-            if diff <= 25:  # DUAL_MAX_ANGLE_DIFF
+            if diff <= 25:
                 c2["dual_channel_match"] = {
                     "with": f"{c3['detector']}#{c3['track_index']}",
                     "pa_diff_deg": round(diff, 1),
                 }
                 break
+
+# --------------------------------------------------------------
+# DEBUG IMAGE GENERATION
+# --------------------------------------------------------------
+def generate_debug_images(det, det_frames, out_dir, all_cands):
+    if not DEBUG:
+        return
+
+    frame_files = sorted(det_frames.glob("*.*"), key=lambda p: p.name, reverse=True)
+    if not frame_files:
+        return
+
+    # 1. Last thumb: newest frame
+    latest_img = load_image(frame_files[0])
+    if latest_img is not None:
+        thumb_path = out_dir / f"lastthumb_{det}.png"
+        cv2.imwrite(str(thumb_path), latest_img)
+        log(f"Generated {thumb_path.name}")
+
+    # 2. Overlay: newest frame + green circles on all midpoints
+    overlay_img = latest_img.copy() if latest_img is not None else np.zeros((1024, 1024), dtype=np.uint8)
+    for cand in all_cands:
+        if cand["detector"] != det or not cand["positions"]:
+            continue
+        mid_pos = cand["positions"][len(cand["positions"]) // 2]
+        cv2.circle(overlay_img, (int(mid_pos["x"]), int(mid_pos["y"])), 6, (0, 255, 0), 2)
+    if overlay_img.ndim == 2:
+        overlay_img = cv2.cvtColor(overlay_img, cv2.COLOR_GRAY2BGR)
+    overlay_path = out_dir / f"overlay_{det}.png"
+    cv2.imwrite(str(overlay_path), overlay_img)
+    log(f"Generated {overlay_path.name}")
+
+    # 3. Contact sheet: 3x3 grid of first 9 frames
+    contact_imgs = [load_image(f) for f in frame_files[:9]]
+    contact_imgs = [img for img in contact_imgs if img is not None]
+    if contact_imgs:
+        h, w = contact_imgs[0].shape
+        grid_size = int(np.ceil(np.sqrt(len(contact_imgs))))
+        contact_h, contact_w = grid_size * h, grid_size * w
+        contact = np.zeros((contact_h, contact_w), dtype=np.uint8)
+        for i, img in enumerate(contact_imgs):
+            row, col = divmod(i, grid_size)
+            y1, y2 = row * h, (row + 1) * h
+            x1, x2 = col * w, (col + 1) * w
+            contact[y1:y2, x1:x2] = img
+        contact_path = out_dir / f"contact_{det}.png"
+        cv2.imwrite(str(contact_path), contact)
+        log(f"Generated {contact_path.name}")
 
 # --------------------------------------------------------------
 # MAIN
@@ -287,6 +334,12 @@ def main():
     c2_cands = [c for c in all_cands if c["detector"] == "C2"]
     c3_cands = [c for c in all_cands if c["detector"] == "C3"]
     match_dual_channel(c2_cands, c3_cands)
+
+    # Generate debug images (lastthumb, overlay, contact)
+    for det in VALID_DETS:
+        det_frames = frames_dir / det
+        if any(det_frames.glob("*.*")):
+            generate_debug_images(det, det_frames, out_dir, all_cands)
 
     # Write report
     now = datetime.utcnow()
