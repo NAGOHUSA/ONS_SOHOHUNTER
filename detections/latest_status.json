@@ -1,16 +1,16 @@
 {
-  "timestamp_utc": "2025-10-28T13:26:40Z",
+  "timestamp_utc": "2025-10-28T13:39:13Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {},
-  "fetched_new_frames": 48,
+  "fetched_new_frames": 0,
   "errors": [
-    "C2: OpenCV(4.12.0) /io/opencv/modules/core/src/arithm.cpp:662: error: (-209:Sizes of input arguments do not match) The operation is neither 'array op array' (where arrays have the same size and the same number of channels), nor 'array op scalar', nor 'scalar op array' in function 'arithm_op'\n",
-    "C3: OpenCV(4.12.0) /io/opencv/modules/core/src/arithm.cpp:662: error: (-209:Sizes of input arguments do not match) The operation is neither 'array op array' (where arrays have the same size and the same number of channels), nor 'array op scalar', nor 'scalar op array' in function 'arithm_op'\n"
+    "C2: 404 Client Error: Not Found for url: https://soho.nascom.nasa.gov/data/LATEST/latest-c2.html",
+    "C3: 404 Client Error: Not Found for url: https://soho.nascom.nasa.gov/data/LATEST/latest-c3.html"
   ],
   "auto_selected_count": 0,
   "name": "latest_status.json",
-  "generated_at": "2025-10-28T13:26:40Z",
+  "generated_at": "2025-10-28T13:39:13Z",
   "c2_frames": 0,
   "c3_frames": 0,
   "candidates": []
