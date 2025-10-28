@@ -1,3 +1,4 @@
+import fetch_lasco
 import os
 import re
 import pathlib
