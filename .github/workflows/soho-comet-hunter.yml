@@ -34,34 +34,55 @@ jobs:
       # --------------------------------------------------------------
       # 1. REPROCESS OLD REPORTS (adds ai_label)
       # --------------------------------------------------------------
-      - name: Reprocess old reports
+            - name: Reprocess old reports
         env:
           USE_AI_CLASSIFIER: "1"
         run: |
           cat > reprocess_old_reports.py << 'EOF'
           #!/usr/bin/env python3
-          import json, os, cv2, numpy as np; from pathlib import Path
-          D = Path("detections"); USE_AI = os.getenv("USE_AI_CLASSIFIER","1")=="1"
-          def classify(c): 
-              if not USE_AI or c.size==0: return {"label":"not_comet","score":0.0}
-              h,w=c.shape; center=c[h//4:3*h//4,w//4:3*w//4]
-              if center.size==0: return {"label":"not_comet","score":0.0}
+          import json, os, cv2, numpy as np
+          from pathlib import Path
+
+          D = Path("detections")
+          USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"
+
+          def classify(crop):
+              if not USE_AI or crop.size == 0:
+                  return {"label": "not_comet", "score": 0.0}
+              h, w = crop.shape
+              center = crop[h//4:3*h//4, w//4:3*w//4]
+              if center.size == 0:
+                  return {"label": "not_comet", "score": 0.0}
               score = min(0.99, (np.mean(center)/255)*0.6 + (np.std(center)/50)*0.4)
-              return {"label":"comet" if score>0.6 else "not_comet", "score":round(score,3)}
+              return {"label": "comet" if score > 0.6 else "not_comet", "score": round(score, 3)}
+
           for p in sorted(D.glob("candidates_*.json"), reverse=True):
-              try: data = json.load(open(p))
-              except: continue
-              mod = False
+              try:
+                  with open(p) as f:
+                      data = json.load(f)
+              except:
+                  continue
+              modified = False
               for cand in data:
-                  if cand.get("ai_label"): continue
-                  cp = Path(cand.get("crop_path","")); cp = D/cp if not cp.is_absolute() else cp
-                  if not cp.exists(): continue
-                  crop = cv2.imread(str(cp),0); if crop is None: continue
+                  if cand.get("ai_label"):
+                      continue
+                  cp = Path(cand.get("crop_path", ""))
+                  if not cp.is_absolute():
+                      cp = D / cp
+                  if not cp.exists():
+                      continue
+                  crop = cv2.imread(str(cp), cv2.IMREAD_GRAYSCALE)
+                  if crop is None:
+                      continue
                   ai = classify(crop)
-                  cand["ai_label"], cand["ai_score"] = ai["label"], ai["score"]; mod = True
-              if mod:
-                  p.rename(p.with_suffix(".json.bak"))
-                  json.dump(data, open(p,"w"), indent=2)
+                  cand["ai_label"] = ai["label"]
+                  cand["ai_score"] = ai["score"]
+                  modified = True
+              if modified:
+                  backup = p.with_suffix(".json.bak")
+                  p.rename(backup)
+                  with open(p, "w") as f:
+                      json.dump(data, f, indent=2)
           EOF
           python reprocess_old_reports.py
 
