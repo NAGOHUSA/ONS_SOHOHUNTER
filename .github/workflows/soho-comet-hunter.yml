@@ -1,3 +1,24 @@
+Yes! You **can and should** update your existing `soho-comet-hunter.yml` file — and I’ll give you the **exact updated version** with the **missing dependencies** added for **clean MP4/GIF animations**.
+
+---
+
+### What We’re Adding
+
+```yaml
+imageio imageio-ffmpeg
+```
+
+These are **required** to generate:
+- `animation_gif_clean_path`
+- `animation_mp4_clean_path` (clean MP4 video — best for review)
+
+Without `imageio-ffmpeg`, **MP4 export will fail silently**.
+
+---
+
+### Updated `soho-comet-hunter.yml` (Ready to Commit)
+
+```yaml
 name: SOHO Comet Hunt
 
 on:
@@ -18,7 +39,6 @@ jobs:
       - name: Checkout (with write token)
         uses: actions/checkout@v4
         with:
-          # GITHUB_TOKEN is automatically provided; with permissions: write it can push
           token: ${{ secrets.GITHUB_TOKEN }}
           persist-credentials: true
           fetch-depth: 0
@@ -31,12 +51,14 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install opencv-python-headless numpy requests pillow
+          pip install opencv-python-headless numpy requests pillow \
+                      filterpy scipy \
+                      imageio imageio-ffmpeg
 
       - name: Fetch & Detect
         env:
           DETECTOR_DEBUG: "1"
-          USE_AI_CLASSIFIER: "0"     # set to "1" to enable the stub classifier
+          USE_AI_CLASSIFIER: "0"
           AI_VETO_ENABLED: "1"
           AI_VETO_LABEL: "not_comet"
           AI_VETO_SCORE_MAX: "0.9"
@@ -73,7 +95,6 @@ jobs:
           set -e
           git push origin HEAD:${GITHUB_REF#refs/heads/}
 
-      # Optional fallback for orgs/protected branches: add a PAT in repo secrets as PUSH_TOKEN (repo scope)
       - name: Push fallback with PAT
         if: steps.commit_outputs.outputs.committed == 'true' && failure()
         env:
@@ -83,7 +104,6 @@ jobs:
             echo "No PUSH_TOKEN provided; cannot fallback push."
             exit 1
           fi
-          # Re-auth with PAT
           git remote set-url origin https://${PUSH_TOKEN}@github.com/${{ github.repository }}.git
           git push origin HEAD:${GITHUB_REF#refs/heads/}
 
@@ -99,5 +119,47 @@ jobs:
             detections/overlay_*.png
             detections/contact_*.png
             detections/lastthumb_*.png
+            detections/animations/*.mp4
+            detections/animations/*.gif
           if-no-files-found: warn
           retention-days: 7
+```
+
+---
+
+### Key Changes
+
+| Line | Change |
+|------|--------|
+| `pip install ...` | Added `filterpy scipy imageio imageio-ffmpeg` |
+| `path:` in `upload-artifact` | Added `detections/animations/*.mp4` and `*.gif` |
+
+> This ensures **clean MP4s are uploaded** and visible in GitHub Actions logs.
+
+---
+
+### Final Checklist (Push These Files)
+
+| File | Status |
+|------|--------|
+| `.github/workflows/soho-comet-hunter.yml` | Updated with `imageio-ffmpeg` |
+| `detector/detect_comets.py` | `write_animation_for_track()` updated |
+| `index.html` | `<script>` block replaced with **clean video player** |
+
+---
+
+### Result After Next Run
+
+1. **GitHub Actions** generates:
+   - `detections/animations/C2_track1_clean.mp4`
+   - `detections/animations/C2_track1_annotated.mp4`
+2. **Viewer (`index.html`)** shows:
+   - Clean MP4 by default
+   - Toggle: **Clean ↔ Annotated**
+   - Loop + controls
+
+---
+
+**Push this now** — your next hourly run will generate **review-ready clean animations**!
+
+Let me know when it's live — I’ll help test the viewer on GitHub Pages.
