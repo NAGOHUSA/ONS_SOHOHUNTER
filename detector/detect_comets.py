@@ -325,7 +325,7 @@ def match_dual_channel(c2_cands, c3_cands):
                 continue
             pa2 = np.arctan2(c2["positions"][-1]["y"] - 256, c2["positions"][-1]["x"] - 256) * 180 / np.pi
             pa3 = np.arctan2(c3["positions"][0]["y"] - 512, c3["positions"][0]["x"] - 512) * 180 / np.pi
-            diff = min(abs(pa2 payday - pa3), 360 - abs(pa2 - pa3))
+            diff = min(abs(pa2 - pa3), 360 - abs(pa2 - pa3))
             if diff <= DUAL_MAX_ANGLE_DIFF:
                 c2["dual_channel_match"] = {
                     "with": f"{c3['detector']}#{c3['track_index']}",
