@@ -6,7 +6,7 @@ on:
     - cron: "*/15 * * * *"    # every 15 minutes
   workflow_dispatch:
 
-# IMPORTANT: allow this workflow to push commits back to the repo
+# Allow write access to push commits
 permissions:
   contents: write
 
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (with write token)
+      - name: Checkout (full history + write token)
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -27,17 +27,78 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install opencv-python-headless numpy requests pillow \
                       filterpy scipy \
                       imageio imageio-ffmpeg
 
-      - name: Fetch & Detect
+      # --------------------------------------------------------------
+      # 1. REPROCESS OLD REPORTS (adds ai_label/ai_score)
+      # --------------------------------------------------------------
+      - name: Reprocess old reports with AI
+        env:
+          USE_AI_CLASSIFIER: "1"
+        run: |
+          cat > reprocess_old_reports.py << 'EOF'
+          #!/usr/bin/env python3
+          import json, os, cv2, numpy as np
+          from pathlib import Path
+          DETECTIONS_DIR = Path("detections")
+          CROPS_SUBDIR = DETECTIONS_DIR / "crops"
+          USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"
+          AI_VETO = os.getenv("AI_VETO_ENABLED", "1") == "1"
+          AI_VETO_LABEL = os.getenv("AI_VETO_LABEL", "not_comet")
+          AI_VETO_MAX = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))
+
+          def classify_crop(crop):
+              if not USE_AI or crop.size == 0: return {"label": "not_comet", "score": 0.0}
+              h, w = crop.shape
+              center = crop[h//4:3*h//4, w//4:3*w//4]
+              if center.size == 0: return {"label": "not_comet", "score": 0.0}
+              brightness = np.mean(center)
+              contrast = np.std(center)
+              score = min(0.99, (brightness / 255) * 0.6 + (contrast / 50) * 0.4)
+              return {"label": "comet" if score > 0.6 else "not_comet", "score": round(score, 3)}
+
+          reports = sorted(DETECTIONS_DIR.glob("candidates_*.json"), reverse=True)
+          print(f"Reprocessing {len(reports)} old reports...")
+          updated = 0
+          for path in reports:
+              try:
+                  with open(path) as f: data = json.load(f)
+              except: continue
+              modified = False
+              for cand in data:
+                  if cand.get("ai_label"): continue
+                  crop_path = Path(cand.get("crop_path", ""))
+                  if not crop_path.is_absolute(): crop_path = DETECTIONS_DIR / crop_path
+                  if not crop_path.exists(): continue
+                  crop = cv2.imread(str(crop_path), cv2.IMREAD_GRAYSCALE)
+                  if crop is None: continue
+                  ai = classify_crop(crop)
+                  if AI_VETO and ai["label"] == AI_VETO_LABEL and ai["score"] > AI_VETO_MAX:
+                      cand["ai_label"], cand["ai_score"] = "vetoed", ai["score"]
+                  else:
+                      cand["ai_label"], cand["ai_score"] = ai["label"], ai["score"]
+                  modified = True
+              if modified:
+                  backup = path.with_suffix(".json.bak")
+                  path.rename(backup)
+                  with open(path, "w") as f: json.dump(data, f, indent=2)
+                  updated += 1
+          print(f"Updated {updated} old reports with ai_label/ai_score")
+          EOF
+          python reprocess_old_reports.py
+
+      # --------------------------------------------------------------
+      # 2. RUN LIVE DETECTION (AI ENABLED)
+      # --------------------------------------------------------------
+      - name: Run live detection
         env:
           DETECTOR_DEBUG: "1"
-          USE_AI_CLASSIFIER: "0"
+          USE_AI_CLASSIFIER: "1"          # AI ON
           AI_VETO_ENABLED: "1"
           AI_VETO_LABEL: "not_comet"
           AI_VETO_SCORE_MAX: "0.9"
@@ -52,41 +113,42 @@ jobs:
           echo "frames tree:"; find frames -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
           echo "detections tree:"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
-      - name: Commit outputs
-        id: commit_outputs
+      # --------------------------------------------------------------
+      # 3. PULL LATEST REMOTE CHANGES (avoid non-fast-forward)
+      # --------------------------------------------------------------
+      - name: Pull latest changes before commit
         run: |
-          set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin
+          git checkout ${{ github.ref_name }}
+          git pull origin ${{ github.ref_name }} --rebase || git rebase --abort
 
+      # --------------------------------------------------------------
+      # 4. COMMIT & PUSH
+      # --------------------------------------------------------------
+      - name: Commit and push changes
+        id: commit_push
+        run: |
+          set -e
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
-            git commit -m "Detector status & outputs: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git commit -m "Auto: detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
             echo "committed=true" >> $GITHUB_OUTPUT
           else
-            echo "No new artifacts to commit."
+            echo "No changes to commit"
             echo "committed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Push (using GITHUB_TOKEN)
-        if: steps.commit_outputs.outputs.committed == 'true'
+      - name: Push changes
+        if: steps.commit_push.outputs.committed == 'true'
         run: |
-          set -e
-          git push origin HEAD:${GITHUB_REF#refs/heads/}
+          git push origin HEAD:${{ github.ref_name }} --force-with-lease
 
-      - name: Push fallback with PAT
-        if: steps.commit_outputs.outputs.committed == 'true' && failure()
-        env:
-          PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
-        run: |
-          if [ -z "${PUSH_TOKEN}" ]; then
-            echo "No PUSH_TOKEN provided; cannot fallback push."
-            exit 1
-          fi
-          git remote set-url origin https://${PUSH_TOKEN}@github.com/${{ github.repository }}.git
-          git push origin HEAD:${GITHUB_REF#refs/heads/}
-
-      - name: Upload artifacts (always)
+      # --------------------------------------------------------------
+      # 5. UPLOAD ARTIFACTS
+      # --------------------------------------------------------------
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: detections-${{ github.run_id }}
