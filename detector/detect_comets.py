@@ -66,11 +66,18 @@ def load_image(path):
     return img
 
 def timestamp_from_name(name):
-    try:
-        dt = datetime.strptime(name.split("_")[1].split(".")[0], "%Y%m%d%H%M%S")
-        return dt.isoformat() + "Z"
-    except:
-        return ""
+    # Handle: C2_20251028_1336_c2_1024.jpg or original SOHO names
+    name = name.lower()
+    # Look for YYYYMMDD_HHMMSS pattern
+    import re
+    m = re.search(r'(\d{8}_\d{6})', name)
+    if m:
+        try:
+            dt = datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
+            return dt.isoformat() + "Z"
+        except:
+            pass
+    return ""
 
 # --------------------------------------------------------------
 # ANIMATION WRITER
@@ -140,16 +147,19 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
     time_idx = {i: ts for i, ts in enumerate(timestamps) if ts}
 
     # Simple background subtraction
-    bg = gaussian_filter(np.median(np.stack(imgs[:10]), axis=0), sigma=1)
-    diff = [cv2.absdiff(im.astype(np.float32), bg) for im in imgs]
+    if len(imgs) < 2:
+        log(f"Not enough frames for {det} to compute background")
+        return []
 
-    # Threshold & find points
-    points_per_frame = []
-    for d in diff:
-        _, thr = cv2.threshold(d, 30, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(thr.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        pts = [c.mean(axis=0).flatten() for c in [c[:,0,:] for c in contours] if 5 < cv2.contourArea(c) < 200]
-        points_per_frame.append(pts)
+    stack = np.stack(imgs[:min(10, len(imgs))])  # Use up to 10 newest
+    bg = gaussian_filter(np.median(stack, axis=0).astype(np.float32), sigma=1)
+
+    # Ensure all images are float32
+    diff = []
+    for im in imgs:
+        im_f = im.astype(np.float32)
+        d = cv2.absdiff(im_f, bg)
+        diff.append(d)
 
     # Kalman-filter based linking
     tracks = []
