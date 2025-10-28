@@ -1,16 +1,16 @@
 {
-  "timestamp_utc": "2025-10-28T10:50:38Z",
+  "timestamp_utc": "2025-10-28T10:56:46Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {},
   "fetched_new_frames": 0,
   "errors": [
-    "C2: 404 Client Error: Not Found for url: https://soho.nascom.nasa.gov/data/LATEST/latest-c2.html",
-    "C3: 404 Client Error: Not Found for url: https://soho.nascom.nasa.gov/data/LATEST/latest-c3.html"
+    "C2: 404 Client Error: Not Found for url: https://soho.nascom.nasa.gov/data/LATEST/latest-lascoc2.html",
+    "C3: 404 Client Error: Not Found for url: https://soho.nascom.nasa.gov/data/LATEST/latest-lascoc3.html"
   ],
   "auto_selected_count": 0,
   "name": "latest_status.json",
-  "generated_at": "2025-10-28T10:50:38Z",
+  "generated_at": "2025-10-28T10:56:46Z",
   "c2_frames": 0,
   "c3_frames": 0,
   "candidates": []
