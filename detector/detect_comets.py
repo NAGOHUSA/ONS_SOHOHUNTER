@@ -22,8 +22,8 @@ except Exception:
 # -----------------------------------------------------------------------------
 DETECTORS = ("C2", "C3")
 LATEST_URLS = {
-    "C2": "https://soho.nascom.nasa.gov/data/LATEST/latest-lascoC2.html",
-    "C3": "https://soho.nascom.nasa.gov/data/LATEST/latest-lascoC3.html",
+    "C2": "https://soho.nascom.nasa.gov/data/LATEST/latest-c2.html",
+    "C3": "https://soho.nascom.nasa.gov/data/LATEST/latest-c3.html",
 }
 # How many latest frames to attempt (guards scraping variability)
 MAX_FRAMES_PER_CAM = 24
