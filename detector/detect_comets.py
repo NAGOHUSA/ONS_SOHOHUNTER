@@ -18,6 +18,7 @@ from collections import defaultdict
 import imageio
 from scipy.ndimage import gaussian_filter
 from filterpy.kalman import KalmanFilter
+import fetch_lasco  # <-- NEW: use the robust fetcher
 
 # --------------------------------------------------------------
 # CONFIG
@@ -31,7 +32,7 @@ DUAL_MAX_MINUTES = int(os.getenv("DUAL_CHANNEL_MAX_MINUTES", "60"))
 DUAL_MAX_ANGLE_DIFF = float(os.getenv("DUAL_CHANNEL_MAX_ANGLE_DIFF", "25"))
 SELECT_TOP_N = int(os.getenv("SELECT_TOP_N_FOR_SUBMIT", "3"))
 DEBUG = os.getenv("DETECTOR_DEBUG", "0") == "1"
-USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"  # ← NOW DEFAULT ON
+USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"
 AI_VETO = os.getenv("AI_VETO_ENABLED", "1") == "1"
 AI_VETO_LABEL = os.getenv("AI_VETO_LABEL", "not_comet")
 AI_VETO_MAX = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))
@@ -110,201 +111,101 @@ def write_animation_for_track(det, names, imgs, tr, out_dir, fps=6, radius=4):
             imageio.mimsave(str(base_c.with_suffix(".gif")), clean, fps=fps)
             out["animation_gif_clean_path"] = str(base_c.with_suffix(".gif"))
         except Exception as e:
-            log(f"GIF save failed: {e}")
-
-    h, w = annot[0].shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    try:
-        w1 = cv2.VideoWriter(str(base_a.with_suffix(".mp4")), fourcc, fps, (w, h))
-        for f in annot:
-            w1.write(f)
-        w1.release()
-        out["animation_mp4_path"] = str(base_a.with_suffix(".mp4"))
-    except Exception as e:
-        log(f"MP4 annotated failed: {e}")
-    try:
-        w2 = cv2.VideoWriter(str(base_c.with_suffix(".mp4")), fourcc, fps, (w, h))
-        for f in clean:
-            w2.write(f)
-        w2.release()
-        out["animation_mp4_clean_path"] = str(base_c.with_suffix(".mp4"))
-    except Exception as e:
-        log(f"MP4 clean failed: {e}")
+            log(f"GIF write failed: {e}")
 
     return out
 
 # --------------------------------------------------------------
-# AI CLASSIFIER (REAL MODEL STUB — REPLACE WITH YOUR MODEL)
+# DETECTION IN ONE SEQUENCE
 # --------------------------------------------------------------
-def classify_crop(crop):
-    """
-    Replace this with your real AI model (TensorFlow, PyTorch, ONNX, etc.)
-    Input: crop (numpy array, grayscale)
-    Output: {"label": "comet" or "not_comet", "score": 0.0 to 1.0}
-    """
-    if not USE_AI:
-        return {"label": "unknown", "score": 0.0}
-
-    # === PLACE YOUR REAL MODEL HERE ===
-    # Example: ONNX model
-    # import onnxruntime as ort
-    # sess = ort.InferenceSession("comet_classifier.onnx")
-    # input_name = sess.get_inputs()[0].name
-    # pred = sess.run(None, {input_name: crop.astype(np.float32)[None, None, :, :]})
-    # score = float(pred[0][0])
-    # label = "comet" if score > 0.5 else "not_comet"
-
-    # === TEMP FALLBACK: Smart heuristic (bright + motion) ===
-    if crop.size == 0:
-        return {"label": "not_comet", "score": 0.0}
-
-    # Bright blob in center?
-    h, w = crop.shape
-    center = crop[h//4:3*h//4, w//4:3*w//4]
-    if center.size == 0:
-        return {"label": "not_comet", "score": 0.0}
-    brightness = np.mean(center)
-    contrast = np.std(center)
-
-    # Motion track length proxy (passed in via global or closure if needed)
-    # For now: assume long tracks are comets
-    score = min(0.99, (brightness / 255) * 0.6 + (contrast / 50) * 0.4)
-    label = "comet" if score > 0.6 else "not_comet"
-    return {"label": label, "score": round(score, 3)}
-
-# --------------------------------------------------------------
-# DETECTION CORE
-# --------------------------------------------------------------
-def detect_in_sequence(det, frames_dir, out_dir, hours=6, step_min=12):
-    frames_dir = Path(frames_dir)
-    out_dir = ensure_dir(out_dir)
-    report_dir = ensure_dir(out_dir / "reports")
-    crops_dir = ensure_dir(out_dir / "crops")
-
-    img_paths = sorted([p for p in frames_dir.glob(f"*{det}*.jpg")])
+def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
+    # Load and sort frames chronologically (newest first)
+    img_paths = sorted(
+        [p for p in det_frames.glob("*.*") if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif"}],
+        key=lambda p: p.name,
+        reverse=True,
+    )
     if not img_paths:
-        log(f"No {det} frames in {frames_dir}")
+        log(f"No frames for {det}")
         return []
 
     names = [p.name for p in img_paths]
-    imgs = [load_image(str(p)) for p in img_paths]
-    if any(i is None for i in imgs):
+    imgs = [load_image(p) for p in img_paths]
+    imgs = [im for im in imgs if im is not None]
+    if not imgs:
         return []
 
-    target_w, target_h = IMG_SIZE[det]
-    imgs = [cv2.resize(i, (target_w, target_h)) for i in imgs]
+    # Build timestamp index
+    timestamps = [timestamp_from_name(n) for n in names]
+    time_idx = {i: ts for i, ts in enumerate(timestamps) if ts}
 
-    processed = [gaussian_filter(img.astype(float), sigma=1.5) for img in imgs]
-    diffs = []
-    for i in range(1, len(processed)):
-        diff = cv2.absdiff(processed[i], processed[i - 1])
-        diff = (diff - diff.min()) / (diff.max() - diff.min() + 1e-8)
-        diffs.append((diff * 255).astype(np.uint8))
+    # Simple background subtraction
+    bg = gaussian_filter(np.median(np.stack(imgs[:10]), axis=0), sigma=1)
+    diff = [cv2.absdiff(im.astype(np.float32), bg) for im in imgs]
 
+    # Threshold & find points
+    points_per_frame = []
+    for d in diff:
+        _, thr = cv2.threshold(d, 30, 255, cv2.THRESH_BINARY)
+        contours, _ = cv2.findContours(thr.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        pts = [c.mean(axis=0).flatten() for c in [c[:,0,:] for c in contours] if 5 < cv2.contourArea(c) < 200]
+        points_per_frame.append(pts)
+
+    # Kalman-filter based linking
     tracks = []
-    min_area = 3
-    for t, diff in enumerate(diffs):
-        _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < min_area:
-                continue
-            x, y, w, h = cv2.boundingRect(cnt)
-            cx, cy = x + w // 2, y + h // 2
-            tracks.append((t + 1, cx, cy, area))
+    for i, pts in enumerate(points_per_frame):
+        for pt in pts:
+            x, y = pt
+            # simple nearest-neighbor link
+            matched = None
+            for tr in tracks:
+                if abs(tr[-1][0] - i) < 3:
+                    dist = np.hypot(tr[-1][1] - x, tr[-1][2] - y)
+                    if dist < 30:
+                        if matched is None or dist < matched[1]:
+                            matched = (tr, dist)
+            if matched:
+                matched[0].append((i, x, y, 0))
+            else:
+                tracks.append([(i, x, y, 0)])
 
-    # Kalman tracking
-    def init_kf(x, y):
-        kf = KalmanFilter(dim_x=4, dim_z=2)
-        kf.x[:2] = np.array([x, y])
-        kf.F = np.array([[1, 0, 1, 0],
-                         [0, 1, 0, 1],
-                         [0, 0, 1, 0],
-                         [0, 0, 0, 1]])
-        kf.H = np.array([[1, 0, 0, 0],
-                         [0, 1, 0, 0]])
-        kf.P *= 1000
-        kf.R *= 5
-        kf.Q *= 0.01
-        return kf
+    # Filter tracks
+    good_tracks = [tr for tr in tracks if len(tr) >= 3]
 
-    active = {}
-    completed = []
-
-    for t, x, y, area in tracks:
-        matched = None
-        best_dist = float("inf")
-        for tid, kf in list(active.items()):
-            pred = kf.predict()
-            dist = np.linalg.norm(pred[:2] - [x, y])
-            if dist < 50 and dist < best_dist:
-                best_dist = dist
-                matched = tid
-        if matched is not None:
-            active[matched].update(np.array([[x], [y]]))
-            active[matched].points.append((t, x, y, area))
-        else:
-            tid = len(active) + len(completed)
-            kf = init_kf(x, y)
-            kf.points = [(t, x, y, area)]
-            active[tid] = kf
-
-        expired = [tid for tid, kf in active.items() if t - kf.points[-1][0] > 5]
-        for tid in expired:
-            completed.append(active.pop(tid).points)
-    completed.extend([kf.points for kf in active.values()])
-
-    valid_tracks = [tr for tr in completed if len(tr) >= 3]
+    # AI classification
+    from ai_classifier import classify_crop_batch
+    crops_dir = ensure_dir(out_dir / "crops")
     candidates = []
-
-    for idx, tr in enumerate(valid_tracks):
-        xs = [p[1] for p in tr]
-        ys = [p[2] for p in tr]
-        dist = np.hypot(xs[-1] - xs[0], ys[-1] - ys[0])
-        speed = dist / max(1, len(tr) - 1)
-        score = len(tr) * (1 + speed / 50)
-
-        mid_t = tr[len(tr)//2][0]
-        mid_img = imgs[mid_t]
-        x0, y0 = int(min(xs)), int(min(ys))
-        x1, y1 = int(max(xs)), int(max(ys))
-        pad = 32
-        crop = mid_img[max(0, y0-pad):min(target_h, y1+pad),
-                       max(0, x0-pad):min(target_w, x1+pad)]
+    for idx, tr in enumerate(good_tracks):
+        mid_t = len(tr) // 2
+        im = imgs[tr[mid_t][0]]
+        x, y = int(tr[mid_t][1]), int(tr[mid_t][2])
+        sz = 64 if det == "C2" else 128
+        crop = im[max(0, y-sz):y+sz, max(0, x-sz):x+sz]
         crop_path = crops_dir / f"{det}_track{idx}_crop.png"
         cv2.imwrite(str(crop_path), crop)
 
-        # === AI CLASSIFICATION (NOW ALWAYS RUNS) ===
-        ai = classify_crop(crop)
-        if AI_VETO and ai["label"] == AI_VETO_LABEL and ai["score"] > AI_VETO_MAX:
-            log(f"Vetoed track {idx}: {ai['label']} ({ai['score']:.3f})")
-            continue
+        ai = classify_crop_batch([str(crop_path)])[0]
 
-        # === ANIMATION ===
+        # Veto logic
+        if AI_VETO and ai["label"] == AI_VETO_LABEL and ai["score"] > AI_VETO_MAX:
+            ai["label"] = "vetoed"
+
         anim_paths = write_animation_for_track(det, names, imgs, tr, out_dir)
 
-        # === BUILD CANDIDATE ===
         cand = {
             "detector": det,
             "track_index": idx,
-            "score": round(score, 2),
+            "score": len(tr) * ai["score"],
             "positions": [
-                {
-                    "time_utc": timestamp_from_name(names[t]),
-                    "x": round(x, 1),
-                    "y": round(y, 1),
-                } for t, x, y, _ in tr
+                {"time_idx": t, "x": round(x, 1), "y": round(y, 1), "time_utc": timestamps[t] if t in time_idx else ""}
+                for t, x, y, _ in tr
             ],
-            "series_mid_frame": names[mid_t],
-            "crop_path": str(crop_path),
-            "image_size": [target_w, target_h],
-            "origin": "upper_left",
-            "original_mid_path": f"detections/originals/{names[mid_t]}",
-            "annotated_mid_path": f"detections/annotated/{names[mid_t]}_annot_track.png",
+            "crop_path": str(crop_path.relative_to(out_dir)),
+            "annotated_overlay_path": f"detections/annotated/{names[mid_t]}_annot_track.png",
             "ai_label": ai["label"],
             "ai_score": ai["score"],
-            "auto_selected": True  # ← keep your logic
+            "auto_selected": True
         }
         cand.update(anim_paths)
         candidates.append(cand)
@@ -346,37 +247,40 @@ def main():
     out_dir = ensure_dir(args.out)
     frames_dir = ensure_dir("frames")
 
-    now = datetime.utcnow()
-    for det in VALID_DETS:
-        det_dir = frames_dir / det
-        ensure_dir(det_dir)
-
-    # Fetch recent images using fetch_lasco
-saved = fetch_lasco.fetch_window(hours_back=args.hours, step_min=args.step_min, root=str(frames_dir))
-log(f"Downloaded {len(saved)} frames across detectors")
+    # ---- NEW: Use fetch_lasco to download real recent images ----
+    saved = fetch_lasco.fetch_window(
+        hours_back=args.hours,
+        step_min=args.step_min,
+        root=str(frames_dir)
+    )
+    log(f"Downloaded {len(saved)} recent frames")
 
     all_cands = []
     for det in VALID_DETS:
         det_frames = frames_dir / det
-        if not any(det_frames.glob("*.jpg")):
+        if not any(det_frames.glob("*.*")):
             continue
         cands = detect_in_sequence(det, det_frames, out_dir, args.hours, args.step_min)
         all_cands.extend(cands)
 
+    # Dual-channel matching
     c2_cands = [c for c in all_cands if c["detector"] == "C2"]
     c3_cands = [c for c in all_cands if c["detector"] == "C3"]
     match_dual_channel(c2_cands, c3_cands)
 
+    # Write report
+    now = datetime.utcnow()
     timestamp = now.strftime("%Y%m%d_%H%M%S")
     report_path = out_dir / f"candidates_{timestamp}.json"
     with open(report_path, "w") as f:
         json.dump(all_cands, f, indent=2)
 
+    # Write status
     status = {
         "timestamp_utc": now.isoformat() + "Z",
         "detectors": {
             det: {
-                "frames": len(list((frames_dir / det).glob("*.jpg"))),
+                "frames": len(list((frames_dir / det).glob("*.*"))),
                 "tracks": len([c for c in all_cands if c["detector"] == det]),
             } for det in VALID_DETS
         }
