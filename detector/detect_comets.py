@@ -350,15 +350,10 @@ def main():
     for det in VALID_DETS:
         det_dir = frames_dir / det
         ensure_dir(det_dir)
-        count = 0
-        for mins in range(0, args.hours * 60, args.step_min):
-            dt = now - timedelta(minutes=mins)
-            url = f"{BASE_URL}/{dt.year}/{det}/img/jpg/{dt.strftime('%Y%m%d')}/{det}_{dt.strftime('%Y%m%d_%H%M%S')}.jpg"
-            path = det_dir / f"{det}_{dt.strftime('%Y%m%d_%H%M%S')}.jpg"
-            if not path.exists():
-                if download_file(url, path):
-                    count += 1
-        log(f"Downloaded {count} {det} frames")
+
+    # Fetch recent images using fetch_lasco
+saved = fetch_lasco.fetch_window(hours_back=args.hours, step_min=args.step_min, root=str(frames_dir))
+log(f"Downloaded {len(saved)} frames across detectors")
 
     all_cands = []
     for det in VALID_DETS:
