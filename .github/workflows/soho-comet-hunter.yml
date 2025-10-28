@@ -1,24 +1,3 @@
-Yes! You **can and should** update your existing `soho-comet-hunter.yml` file — and I’ll give you the **exact updated version** with the **missing dependencies** added for **clean MP4/GIF animations**.
-
----
-
-### What We’re Adding
-
-```yaml
-imageio imageio-ffmpeg
-```
-
-These are **required** to generate:
-- `animation_gif_clean_path`
-- `animation_mp4_clean_path` (clean MP4 video — best for review)
-
-Without `imageio-ffmpeg`, **MP4 export will fail silently**.
-
----
-
-### Updated `soho-comet-hunter.yml` (Ready to Commit)
-
-```yaml
 name: SOHO Comet Hunt
 
 on:
@@ -123,43 +102,3 @@ jobs:
             detections/animations/*.gif
           if-no-files-found: warn
           retention-days: 7
-```
-
----
-
-### Key Changes
-
-| Line | Change |
-|------|--------|
-| `pip install ...` | Added `filterpy scipy imageio imageio-ffmpeg` |
-| `path:` in `upload-artifact` | Added `detections/animations/*.mp4` and `*.gif` |
-
-> This ensures **clean MP4s are uploaded** and visible in GitHub Actions logs.
-
----
-
-### Final Checklist (Push These Files)
-
-| File | Status |
-|------|--------|
-| `.github/workflows/soho-comet-hunter.yml` | Updated with `imageio-ffmpeg` |
-| `detector/detect_comets.py` | `write_animation_for_track()` updated |
-| `index.html` | `<script>` block replaced with **clean video player** |
-
----
-
-### Result After Next Run
-
-1. **GitHub Actions** generates:
-   - `detections/animations/C2_track1_clean.mp4`
-   - `detections/animations/C2_track1_annotated.mp4`
-2. **Viewer (`index.html`)** shows:
-   - Clean MP4 by default
-   - Toggle: **Clean ↔ Annotated**
-   - Loop + controls
-
----
-
-**Push this now** — your next hourly run will generate **review-ready clean animations**!
-
-Let me know when it's live — I’ll help test the viewer on GitHub Pages.
