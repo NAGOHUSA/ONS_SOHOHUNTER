@@ -34,7 +34,7 @@ jobs:
       # --------------------------------------------------------------
       # 1. REPROCESS OLD REPORTS (adds ai_label)
       # --------------------------------------------------------------
-            - name: Reprocess old reports
+      - name: Reprocess old reports
         env:
           USE_AI_CLASSIFIER: "1"
         run: |
@@ -95,8 +95,8 @@ jobs:
           DETECTOR_DEBUG: "1"
         run: |
           python detector/detect_comets.py --hours 6 --step-min 12 --out detections
-          find frames -maxdepth 2 -type f -printf "  - %P\n" | sort
-          find detections -maxdepth 2 -type f -printf "  - %P\n" | sort
+          echo "frames tree:"; find frames -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
+          echo "detections tree:"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
       # --------------------------------------------------------------
       # 3. COMMIT NEW FILES FIRST
