@@ -70,11 +70,11 @@ def load_image(path):
 
 def timestamp_from_name(name):
     import re
-    m = re.search(r'(\d{8}_\d{6})', name)
+    m = re.search(r'(\d{8}_\d{4})', name)  # FIXED: \d{4} for hhmm (no ss)
     if m:
         try:
-            dt = datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
-            return dt.isoformat() + "Z"
+            dt = datetime.strptime(m.group(1), "%Y%m%d_%H%M")
+            return dt.isoformat() + ":00Z"  # FIXED: Add :00 for ss
         except:
             pass
     return ""
@@ -113,7 +113,6 @@ def fit_parabolic_2d(times_sec, rho_obs):
     res = least_squares(
         parabolic_residuals_2d,
         x0=[q0, t_peri0],
-        args=(times_sec, rho_obs),
         bounds=([0.5, times_sec[0]-7200], [20, times_sec[-1]+7200])
     )
     if not res.success:
@@ -201,7 +200,7 @@ def fit_orbit_3d(c2_obs, c3_obs):
         "inclination_deg": round(inc_deg, 1),
         "speed_at_perihelion_kms": round(v_peri),
         "orbit_group_guess": group,
-        "fit_success": True
+        "fit_success": true
     }
 
 # --------------------------------------------------------------
