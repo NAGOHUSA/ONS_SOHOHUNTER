@@ -1,4 +1,3 @@
-# DOCUMENT filename="detect_comets.py"
 #!/usr/bin/env python3
 """
 SOHO Comet Hunter — detect_comets.py
@@ -60,11 +59,12 @@ def timestamp_from_name(name):
 # --------------------------------------------------------------
 # ANIMATION WRITER
 # --------------------------------------------------------------
-def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=4):
+def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=8, line_thickness=2):
     """
     Builds two frame stacks: clean and annotated, writes GIFs, and also writes
     a mid-frame still for both clean and annotated.
     Returns paths RELATIVE to out_dir so the frontend can raw() them.
+    Enhanced annotations: bigger cyan circles/trails + red cross for visibility.
     """
     from pathlib import Path
     out_dir = Path(out_dir)
@@ -74,18 +74,28 @@ def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=4)
     xy = {t: (int(round(x)), int(round(y))) for t, x, y in tr}
     trail = []
     clean, annot = [], []
+    annotations_drawn = 0  # Debug counter
 
     for ti in range(tmin, tmax + 1):
         im = imgs[ti]
         bgr = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR) if im.ndim == 2 else im.copy()
         clean.append(bgr.copy())
+        
+        # Annotate
+        current_annot = bgr.copy()
         if ti in xy:
             trail.append(xy[ti])
-        for a, b in zip(trail[:-1], trail[1:]):
-            cv2.line(bgr, a, b, (0, 255, 0), 1)
-        if ti in xy:
-            cv2.circle(bgr, xy[ti], radius, (0, 255, 0), 1)
-        annot.append(bgr)
+            annotations_drawn += 1
+            # Draw trail lines (connect previous points)
+            for a, b in zip(trail[:-1], trail[1:]):
+                cv2.line(current_annot, a, b, (0, 255, 255), line_thickness)  # Cyan trail
+            # Draw bold circle at current position
+            cv2.circle(current_annot, xy[ti], radius, (0, 255, 255), line_thickness)
+            # Add faint glow for emphasis
+            cv2.circle(current_annot, xy[ti], radius + 2, (0, 255, 255), line_thickness - 1)
+        annot.append(current_annot)
+
+    log(f"[ANNOT] Track {track_id}: Drew {annotations_drawn} annotations over {len(tr)} positions")
 
     # Where to save
     anim_dir = (out_dir / "animations"); anim_dir.mkdir(parents=True, exist_ok=True)
@@ -111,13 +121,24 @@ def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=4)
     except Exception as e:
         log(f"GIF write failed: {e}")
 
-    # Mid-frame stills
+    # Mid-frame stills (with extra emphasis on mid-position)
     mid_idx = tr[len(tr)//2][0]
+    mid_ti = mid_idx - tmin  # Index in the stack
     try:
         orig_png = still_orig_dir / f"{det}_track{track_id}_mid.png"
         anno_png = still_anno_dir / f"{det}_track{track_id}_mid.png"
-        cv2.imwrite(str(orig_png), clean[mid_idx - tmin])
-        cv2.imwrite(str(anno_png), annot[mid_idx - tmin])
+        cv2.imwrite(str(orig_png), clean[mid_ti])
+        
+        # Enhance mid-frame annotation: Add red crosshair at exact mid-position
+        mid_anno = annot[mid_ti].copy()
+        if mid_idx in xy:
+            mx, my = xy[mid_idx]
+            # Red crosshair (bold, easy to spot)
+            cv2.line(mid_anno, (mx - 10, my), (mx + 10, my), (0, 0, 255), 2)
+            cv2.line(mid_anno, (mx, my - 10), (mx, my + 10), (0, 0, 255), 2)
+            log(f"[ANNOT] Added red crosshair to mid-frame for track {track_id}")
+        
+        cv2.imwrite(str(anno_png), mid_anno)
         out["original_mid_path"]  = str(orig_png.relative_to(out_dir))
         out["annotated_mid_path"] = str(anno_png.relative_to(out_dir))
     except Exception as e:
