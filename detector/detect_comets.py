@@ -39,7 +39,7 @@ DEBUG = os.getenv("DETECTOR_DEBUG", "0") == "1"
 USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"
 AI_VETO = os.getenv("AI_VETO_ENABLED", "1") == "1"
 AI_VETO_LABEL = os.getenv("AI_VETO_LABEL", "not_comet")
-AI_VETO_MAX = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))
+AI_VETO_MAX = float(os.getenv("AI_VETO_SCORE_MAX", "0.7"))  # Lowered from 0.9
 
 # --------------------------------------------------------------
 # CONSTANTS (LASCO geometry)
@@ -70,11 +70,11 @@ def load_image(path):
 
 def timestamp_from_name(name):
     import re
-    m = re.search(r'(\d{8}_\d{4})', name)  # FIXED: \d{4} for hhmm (no ss)
+    m = re.search(r'(\d{8}_\d{4})', name)  # e.g., 20250405_1234
     if m:
         try:
             dt = datetime.strptime(m.group(1), "%Y%m%d_%H%M")
-            return dt.isoformat() + ":00Z"  # FIXED: Add :00 for ss
+            return dt.isoformat() + ":00Z"
         except:
             pass
     return ""
@@ -83,7 +83,6 @@ def timestamp_from_name(name):
 # PLATE-SCALE HELPERS
 # --------------------------------------------------------------
 def pixel_to_rho_theta(det, x, y):
-    """Return (rho in R⊙, theta in radians) from pixel (x,y)."""
     scale = LASCO_C2_SCALE if det == "C2" else LASCO_C3_SCALE
     cx = cy = 512
     dx = x - cx
@@ -96,11 +95,11 @@ def pixel_to_rho_theta(det, x, y):
     return rho_Rsun, theta
 
 # --------------------------------------------------------------
-# 2-D PARABOLIC ORBIT (plane-of-sky)
+# 2-D PARABOLIC ORBIT
 # --------------------------------------------------------------
 def parabolic_residuals_2d(params, t_sec, rho_obs):
     q, t_peri = params
-    T = np.sqrt(q**3 / (2 * GM_SUN / (R_SUN_KM*1000)**3)) * 86400   # seconds
+    T = np.sqrt(q**3 / (2 * GM_SUN / (R_SUN_KM*1000)**3)) * 86400
     dt = t_sec - t_peri
     rho_pred = q * (1 + (dt / T)**2)
     return rho_pred - rho_obs
@@ -119,35 +118,30 @@ def fit_parabolic_2d(times_sec, rho_obs):
         return None
     q, t_peri = res.x
     T = np.sqrt(q**3 / (2 * GM_SUN / (R_SUN_KM*1000)**3)) * 86400
-    v_peri = np.sqrt(2 * GM_SUN / (q * R_SUN_KM*1000)) / 1000   # km/s
+    v_peri = np.sqrt(2 * GM_SUN / (q * R_SUN_KM*1000)) / 1000
     return {"q_Rsun": q, "t_peri_sec": t_peri, "v_peri_kms": v_peri, "T_sec": T}
 
 # --------------------------------------------------------------
-# 3-D ORBIT USING C2 + C3 DUAL VIEW (pure NumPy/SciPy)
+# 3-D ORBIT USING C2 + C3 DUAL VIEW
 # --------------------------------------------------------------
 def orbit_residuals_3d(params, obs_c2, obs_c3):
-    """params = [q, t_peri, Omega, omega, inc]"""
     q, t_peri, Omega, omega, inc = params
     residuals = []
     for t, rho, pa, _ in obs_c2 + obs_c3:
         dt = (t - t_peri) * 86400
         M = np.sqrt(2 * GM_SUN / (q * R_SUN_KM*1000)**3) * dt
-        # Barker's equation (parabolic)
         w = (M/3)**(1/3) + (M/3)**(-1/3)
         r = q * (1 + w**2)
         true_anom = 2 * np.arctan(w)
 
-        # Position in orbital plane
         x_orb = r * (np.cos(true_anom) * np.cos(omega) - np.sin(true_anom) * np.sin(omega) * np.cos(inc))
         y_orb = r * (np.cos(true_anom) * np.sin(omega) + np.sin(true_anom) * np.cos(omega) * np.cos(inc))
         z_orb = r * np.sin(true_anom) * np.sin(inc)
 
-        # Rotate by Ω
         X = x_orb * np.cos(Omega) - y_orb * np.sin(Omega)
         Y = x_orb * np.sin(Omega) + y_orb * np.cos(Omega)
         Z = z_orb
 
-        # Project to plane-of-sky → ρ only
         rho_pred = np.hypot(X, Y) * AU_KM / R_SUN_KM
         residuals.append(rho_pred - rho)
     return residuals
@@ -200,11 +194,11 @@ def fit_orbit_3d(c2_obs, c3_obs):
         "inclination_deg": round(inc_deg, 1),
         "speed_at_perihelion_kms": round(v_peri),
         "orbit_group_guess": group,
-        "fit_success": true
+        "fit_success": True
     }
 
 # --------------------------------------------------------------
-# ORBIT PREDICTION (called per track)
+# ORBIT PREDICTION
 # --------------------------------------------------------------
 def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
     obs = []
@@ -214,7 +208,7 @@ def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
         try:
             t_utc = datetime.fromisoformat(timestamps[t_idx].replace("Z", "+00:00"))
             rho, theta = pixel_to_rho_theta(det, x, y)
-            if rho < 1.1:          # inside occulting disk
+            if rho < 2.0:  # Tighter occulting disk mask
                 continue
             pa_deg = np.degrees(theta)
             t_sec = (t_utc - datetime(1970,1,1)).total_seconds()
@@ -225,7 +219,6 @@ def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
     if len(obs) < 3:
         return {"error": "Too few points"}
 
-    # ---- 2-D fit -------------------------------------------------
     times = np.array([t for t,_,_,_ in obs])
     rhos  = np.array([r for _,r,_,_ in obs])
     fit2d = fit_parabolic_2d(times, rhos)
@@ -247,7 +240,6 @@ def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
             "orbit_group_guess": group
         }
 
-    # ---- 3-D fit (dual channel) ---------------------------------
     if dual_match:
         c2_obs = obs
         c3_obs = []
@@ -258,7 +250,7 @@ def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
             t_utc = datetime.fromisoformat(t_str.replace("Z", "+00:00"))
             x, y = pos["x"], pos["y"]
             rho, theta = pixel_to_rho_theta("C3", x, y)
-            if rho < 1.1:
+            if rho < 2.0:
                 continue
             pa_deg = np.degrees(theta)
             t_sec = (t_utc - datetime(1970,1,1)).total_seconds()
@@ -268,7 +260,6 @@ def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
             if fit3d:
                 result["orbit_3d"] = fit3d
 
-    # ---- ASCII plot (2-D) ---------------------------------------
     if fit2d:
         lines = ["Orbit (2-D):"]
         for t, r, pa, _ in obs:
@@ -280,7 +271,6 @@ def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
         )
         result["ascii_plot"] = "\n".join(lines)
 
-    # ---- PNG plot (2-D) -----------------------------------------
     try:
         plot_dir = ensure_dir(Path("detections/plots"))
         fig, ax = plt.subplots(figsize=(7,4), dpi=120)
@@ -304,7 +294,7 @@ def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
     return result
 
 # --------------------------------------------------------------
-# ANIMATION WRITER (GIF + MP4)
+# ANIMATION WRITER
 # --------------------------------------------------------------
 def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=8, line_thickness=2):
     out_dir = Path(out_dir)
@@ -350,7 +340,6 @@ def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=8,
     except Exception as e:
         log(f"Animation write failed: {e}")
 
-    # Mid-frame stills
     mid_idx = tr[len(tr)//2][0]
     mid_ti = mid_idx - tmin
     still_orig_dir = ensure_dir(out_dir / "originals")
@@ -401,13 +390,13 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
     # Bright points
     points_per_frame = []
     for d in diff:
-        _, thr = cv2.threshold(d, 30, 255, cv2.THRESH_BINARY)
+        _, thr = cv2.threshold(d, 50, 255, cv2.THRESH_BINARY)  # Raised from 30
         thr8 = thr.astype(np.uint8)
         contours, _ = cv2.findContours(thr8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         pts = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if 5 < area < 200:
+            if 15 < area < 150:  # Tighter than 5–200
                 M = cv2.moments(cnt)
                 if M["m00"]:
                     cx = M["m10"] / M["m00"]
@@ -434,9 +423,29 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
             else:
                 tracks.append([(i, x, y)])
 
-    good_tracks = [tr for tr in tracks if len(tr) >= 3]
+    # === MOTION SMOOTHNESS FILTER ===
+    good_tracks = []
+    for tr in tracks:
+        if len(tr) < 3:
+            continue
+        xs = [x for _, x, _ in tr]
+        ys = [y for _, _, y in tr]
+        t = np.arange(len(tr))
+        if len(t) > 3:
+            vx = np.polyfit(t, xs, 1)[0]
+            vy = np.polyfit(t, ys, 1)[0]
+            speed = np.hypot(vx, vy)
+            if speed < 0.5 or speed > 50:
+                continue
+            pred_x = np.polyval(np.polyfit(t, xs, 1), t)
+            pred_y = np.polyval(np.polyfit(t, ys, 1), t)
+            resid = np.mean([np.hypot(xs[i]-pred_x[i], ys[i]-pred_y[i]) for i in range(len(t))])
+            if resid > 8:
+                continue
+        good_tracks.append(tr)
+    # ===============================
 
-    # AI stub + crops
+    # AI + crops
     crops_dir = ensure_dir(out_dir / "crops")
     candidates = []
 
@@ -456,9 +465,30 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
         crop_path = crops_dir / f"{det}_track{idx}_crop.png"
         cv2.imwrite(str(crop_path), crop)
 
-        # ---- Dummy AI ------------------------------------------------
-        ai = {"label": "comet" if np.random.rand() > 0.7 else "not_comet",
-              "score": np.random.rand()}
+        # ---- REAL AI: contrast + compactness --------------------
+        h, w = crop.shape
+        if h < 20 or w < 20:
+            ai = {"label": "not_comet", "score": 0.0}
+        else:
+            cy, cx = h//2, w//2
+            center = crop[cy-8:cy+8, cx-8:cx+8]
+            edge   = np.concatenate([crop[:8, :], crop[-8:, :], crop[:, :8], crop[:, -8:]])
+            center_mean = np.mean(center) if center.size > 0 else 0
+            edge_mean   = np.mean(edge) if edge.size > 0 else 0
+            contrast = max(0, (center_mean - edge_mean) / 255.0)
+
+            _, thresh = cv2.threshold(crop, 50, 255, cv2.THRESH_BINARY)
+            contours, _ = cv2.findContours(thresh.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            compactness = 0
+            if contours:
+                largest = max(contours, key=cv2.contourArea)
+                area = cv2.contourArea(largest)
+                perimeter = cv2.arcLength(largest, True)
+                if perimeter > 0:
+                    compactness = 4 * np.pi * area / (perimeter ** 2)
+            score = min(0.99, 0.6 * contrast + 0.4 * compactness)
+            label = "comet" if score > 0.55 else "not_comet"
+            ai = {"label": label, "score": round(score, 3)}
 
         if AI_VETO and ai["label"] == AI_VETO_LABEL and ai["score"] > AI_VETO_MAX:
             ai["label"] = "vetoed"
@@ -483,7 +513,6 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
         }
         cand.update(anim_paths)
 
-        # ---- ORBIT ---------------------------------------------------
         dual = cand.get("dual_channel_match")
         orbit = predict_orbit_for_track(det, tr, timestamps, dual_match=dual)
         cand["predicted_orbit"] = orbit
