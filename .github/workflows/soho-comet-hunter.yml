@@ -3,7 +3,7 @@ name: SOHO Comet Hunt
 on:
   schedule:
     - cron: "0 * * * *"
-    - cron: "*/15 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
