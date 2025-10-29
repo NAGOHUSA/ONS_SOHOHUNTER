@@ -1,3 +1,4 @@
+# DOCUMENT filename="detect_comets.py"
 #!/usr/bin/env python3
 """
 SOHO Comet Hunter — detect_comets.py
@@ -59,7 +60,16 @@ def timestamp_from_name(name):
 # --------------------------------------------------------------
 # ANIMATION WRITER
 # --------------------------------------------------------------
-def write_animation_for_track(det, names, imgs, tr, out_dir, fps=6, radius=4):
+def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=4):
+    """
+    Builds two frame stacks: clean and annotated, writes GIFs, and also writes
+    a mid-frame still for both clean and annotated.
+    Returns paths RELATIVE to out_dir so the frontend can raw() them.
+    """
+    from pathlib import Path
+    out_dir = Path(out_dir)
+
+    # Build clean + annotated frames
     tmin, tmax = tr[0][0], tr[-1][0]
     xy = {t: (int(round(x)), int(round(y))) for t, x, y in tr}
     trail = []
@@ -77,22 +87,41 @@ def write_animation_for_track(det, names, imgs, tr, out_dir, fps=6, radius=4):
             cv2.circle(bgr, xy[ti], radius, (0, 255, 0), 1)
         annot.append(bgr)
 
-    anim_dir = ensure_dir(Path(out_dir) / "animations")
-    ident = tr[0][0]
-    base_a = anim_dir / f"{det}_track{ident}_annotated"
-    base_c = anim_dir / f"{det}_track{ident}_clean"
+    # Where to save
+    anim_dir = (out_dir / "animations"); anim_dir.mkdir(parents=True, exist_ok=True)
+    still_orig_dir = (out_dir / "originals"); still_orig_dir.mkdir(parents=True, exist_ok=True)
+    still_anno_dir = (out_dir / "annotated"); still_anno_dir.mkdir(parents=True, exist_ok=True)
+
+    # Base names now use track_id (NOT time index)
+    base_a = anim_dir / f"{det}_track{track_id}_annotated.gif"
+    base_c = anim_dir / f"{det}_track{track_id}_clean.gif"
+
+    # Write GIFs (GIFs only; you can add MP4 later if desired)
     out = {
         "animation_gif_path": None,
         "animation_gif_clean_path": None,
+        "original_mid_path": None,
+        "annotated_mid_path": None,
     }
-
     try:
-        imageio.mimsave(str(base_a.with_suffix(".gif")), annot, fps=fps)
-        out["animation_gif_path"] = str(base_a.with_suffix(".gif"))
-        imageio.mimsave(str(base_c.with_suffix(".gif")), clean, fps=fps)
-        out["animation_gif_clean_path"] = str(base_c.with_suffix(".gif"))
+        imageio.mimsave(str(base_a), annot, fps=fps)
+        out["animation_gif_path"] = str(base_a.relative_to(out_dir))
+        imageio.mimsave(str(base_c), clean, fps=fps)
+        out["animation_gif_clean_path"] = str(base_c.relative_to(out_dir))
     except Exception as e:
         log(f"GIF write failed: {e}")
+
+    # Mid-frame stills
+    mid_idx = tr[len(tr)//2][0]
+    try:
+        orig_png = still_orig_dir / f"{det}_track{track_id}_mid.png"
+        anno_png = still_anno_dir / f"{det}_track{track_id}_mid.png"
+        cv2.imwrite(str(orig_png), clean[mid_idx - tmin])
+        cv2.imwrite(str(anno_png), annot[mid_idx - tmin])
+        out["original_mid_path"]  = str(orig_png.relative_to(out_dir))
+        out["annotated_mid_path"] = str(anno_png.relative_to(out_dir))
+    except Exception as e:
+        log(f"Still write failed: {e}")
 
     return out
 
@@ -190,7 +219,7 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
         if AI_VETO and ai["label"] == AI_VETO_LABEL and ai["score"] > AI_VETO_MAX:
             ai["label"] = "vetoed"
 
-        anim_paths = write_animation_for_track(det, names, imgs, tr, out_dir)
+        anim_paths = write_animation_for_track(det, imgs, tr, out_dir, track_id=idx)
 
         cand = {
             "detector": det,
