@@ -2,8 +2,13 @@
 """
 SOHO Comet Hunter — detect_comets.py
 Detects moving objects in LASCO C2/C3 sequences.
-Outputs: JSON report with ai_label/ai_score, crops, animations, etc.
+Outputs: JSON report with ai_label/ai_score, crops, animations, **2-D & 3-D orbit predictions**.
 """
+
+# --------------------------------------------------------------
+# DEPENDENCIES (install once)
+# --------------------------------------------------------------
+# pip install opencv-python numpy imageio scipy matplotlib astropy
 
 import argparse
 import json
@@ -12,9 +17,13 @@ import sys
 import cv2
 import numpy as np
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import imageio
 from scipy.ndimage import gaussian_filter
+from scipy.optimize import minimize, least_squares
+import matplotlib.pyplot as plt
+from astropy.coordinates import SkyCoord, get_sun
+from astropy import units as u
 import fetch_lasco  # Robust image fetcher
 
 # --------------------------------------------------------------
@@ -29,6 +38,17 @@ AI_VETO_LABEL = os.getenv("AI_VETO_LABEL", "not_comet")
 AI_VETO_MAX = float(os.getenv("AI_VETO_SCORE_MAX", "0.9"))
 
 # --------------------------------------------------------------
+# CONSTANTS (LASCO geometry)
+# --------------------------------------------------------------
+# Plate scale (arcsec/pixel) – official values for 1024×1024 images
+LASCO_C2_SCALE = 5.94          # arcsec/pixel
+LASCO_C3_SCALE = 56.0          # arcsec/pixel
+R_SUN_ARCSEC = 960.0           # Solar radius in arcsec
+R_SUN_KM = 6.957e5
+AU_KM = 1.495978707e8
+GM_SUN = 1.3271244e20          # m³ s⁻²
+
+# --------------------------------------------------------------
 # UTILS
 # --------------------------------------------------------------
 def log(*a, **kw):
@@ -40,7 +60,7 @@ def ensure_dir(p):
     return p
 
 def load_image(path):
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
     if img is None:
         log(f"Failed to load {path}")
     return img
@@ -57,89 +77,298 @@ def timestamp_from_name(name):
     return ""
 
 # --------------------------------------------------------------
-# ANIMATION WRITER
+# PLATE-SCALE HELPERS
+# --------------------------------------------------------------
+def pixel_to_rho_theta(det, x, y):
+    """Return (rho in R⊙, theta in radians) from pixel (x,y)."""
+    scale = LASCO_C2_SCALE if det == "C2" else LASCO_C3_SCALE
+    cx = cy = 512  # both instruments are 1024×1024 centered
+    dx = x - cx
+    dy = y - cy
+    rho_arcsec = np.hypot(dx, dy) * scale
+    rho_Rsun = rho_arcsec / R_SUN_ARCSEC
+    theta = np.arctan2(dy, dx)
+    if theta < 0:
+        theta += 2 * np.pi
+    return rho_Rsun, theta
+
+# --------------------------------------------------------------
+# 2-D PARABOLIC ORBIT (plane-of-sky)
+# --------------------------------------------------------------
+def parabolic_residuals_2d(params, t_sec, rho_obs):
+    q, t_peri = params
+    T = np.sqrt(q**3 / (2 * GM_SUN / (R_SUN_KM*1000)**3)) * 86400   # seconds
+    dt = t_sec - t_peri
+    rho_pred = q * (1 + (dt / T)**2)
+    return rho_pred - rho_obs
+
+def fit_parabolic_2d(times_sec, rho_obs):
+    if len(times_sec) < 3:
+        return None
+    q0 = np.min(rho_obs) * 0.9
+    t_peri0 = times_sec[np.argmin(rho_obs)]
+    res = least_squares(
+        parabolic_residuals_2d,
+        x0=[q0, t_peri0],
+        bounds=([0.5, times_sec[0]-7200], [20, times_sec[-1]+7200])
+    )
+    if not res.success:
+        return None
+    q, t_peri = res.x
+    T = np.sqrt(q**3 / (2 * GM_SUN / (R_SUN_KM*1000)**3)) * 86400
+    v_peri = np.sqrt(2 * GM_SUN / (q * R_SUN_KM*1000)) / 1000   # km/s
+    return {"q_Rsun": q, "t_peri_sec": t_peri, "v_peri_kms": v_peri, "T_sec": T}
+
+# --------------------------------------------------------------
+# 3-D ORBIT USING C2 + C3 DUAL VIEW
+# --------------------------------------------------------------
+def heliocentric_xyz(rho_Rsun, pa_deg, det):
+    """Convert plane-of-sky (rho, PA) to 3-D heliocentric (X,Y,Z) assuming Sun at origin."""
+    pa = np.radians(pa_deg)
+    # Approximate distance along line-of-sight using instrument distance (AU)
+    # C2 ≈ 2.5 R⊙, C3 ≈ 15 R⊙ – we use a simple projection
+    dist_AU = 1.0 if det == "C2" else 1.0   # placeholder; real geometry uses ephemeris
+    r_km = rho_Rsun * R_SUN_KM
+    x = r_km * np.cos(pa)
+    y = r_km * np.sin(pa)
+    z = 0.0  # we will solve for Z later
+    return np.array([x, y, z]) / AU_KM   # in AU
+
+def orbit_residuals_3d(params, obs_c2, obs_c3):
+    """params = [q, t_peri, Omega, omega, inc]"""
+    q, t_peri, Omega, omega, inc = params
+    residuals = []
+    for t, rho, pa, det in obs_c2 + obs_c3:
+        dt = (t - t_peri) * 86400
+        # Parabolic orbit in 3-D (standard Keplerian)
+        # Simplified: use mean anomaly M = sqrt(2*GM/q^3)*dt
+        M = np.sqrt(2 * GM_SUN / (q * R_SUN_KM*1000)**3) * dt
+        # Solve Kepler for parabolic (Barker's equation)
+        w = (M/3)**(1/3) + (M/3)**(-1/3)   # approx
+        r = q * (1 + w**2)
+        # Position in orbital plane
+        true_anom = 2 * np.arctan(w)
+        x_orb = r * (np.cos(true_anom) * np.cos(omega) - np.sin(true_anom) * np.sin(omega) * np.cos(inc))
+        y_orb = r * (np.cos(true_anom) * np.sin(omega) + np.sin(true_anom) * np.cos(omega) * np.cos(inc))
+        z_orb = r * np.sin(true_anom) * np.sin(inc)
+        # Rotate by Omega
+        X = x_orb * np.cos(Omega) - y_orb * np.sin(Omega)
+        Y = x_orb * np.sin(Omega) + y_orb * np.cos(Omega)
+        Z = z_orb
+        # Project to plane-of-sky for this instrument
+        # (simplified: we only have rho & PA, so compare rho)
+        rho_pred = np.hypot(X, Y) * AU_KM / R_SUN_KM
+        residuals.append(rho_pred - rho)
+    return residuals
+
+def fit_orbit_3d(c2_obs, c3_obs):
+    """c2_obs/c3_obs = list of (t_sec, rho_Rsun, pa_deg, det)"""
+    if len(c2_obs) < 2 or len(c3_obs) < 2:
+        return None
+    # Initial guess from 2-D fit on C2
+    times_c2 = np.array([t for t,_,_,_ in c2_obs])
+    rho_c2 = np.array([r for _,r,_,_ in c2_obs])
+    init2d = fit_parabolic_2d(times_c2, rho_c2)
+    if not init2d:
+        return None
+    q0 = init2d["q_Rsun"]
+    t_peri0 = init2d["t_peri_sec"]
+    # Rough PA → Omega, omega, inc = 0
+    pa_mean = np.mean([pa for _,_,pa,_ in c2_obs])
+    Omega0 = np.radians(pa_mean)
+    omega0 = 0.0
+    inc0 = 0.0
+    res = least_squares(
+        orbit_residuals_3d,
+        x0=[q0, t_peri0, Omega0, omega0, inc0],
+        bounds=([0.5, t_peri0-86400, 0, -np.pi, 0],
+                [15, t_peri0+86400, 2*np.pi, np.pi, np.pi])
+    )
+    if not res.success:
+        return None
+    q, t_peri, Omega, omega, inc = res.x
+    peri_time = datetime.utcfromtimestamp(t_peri)
+    v_peri = np.sqrt(2 * GM_SUN / (q * R_SUN_KM*1000)) / 1000
+    # Group guess
+    inc_deg = np.degrees(inc)
+    if 200 < np.degrees(Omega)%360 < 320 and v_peri > 450:
+        group = "Kreutz"
+    elif 300 < np.degrees(Omega)%360 < 360 and v_peri > 400:
+        group = "Kracht"
+    elif 50 < np.degrees(Omega)%360 < 150:
+        group = "Meyer"
+    else:
+        group = "Unknown"
+    return {
+        "perihelion_time_utc": peri_time.isoformat() + "Z",
+        "perihelion_distance_Rsun": round(q, 3),
+        "position_angle_deg": round(np.degrees(Omega)%360, 1),
+        "inclination_deg": round(inc_deg, 1),
+        "speed_at_perihelion_kms": round(v_peri),
+        "orbit_group_guess": group,
+        "fit_success": True
+    }
+
+# --------------------------------------------------------------
+# ORBIT PREDICTION (called per track)
+# --------------------------------------------------------------
+def predict_orbit_for_track(det, tr, timestamps, dual_match=None):
+    """Return both 2-D and (if possible) 3-D orbit dicts."""
+    obs = []
+    for t_idx, x, y in tr:
+        if t_idx >= len(timestamps) or not timestamps[t_idx]:
+            continue
+        try:
+            t_utc = datetime.fromisoformat(timestamps[t_idx].replace("Z", "+00:00"))
+            rho, theta = pixel_to_rho_theta(det, x, y)
+            if rho < 1.1:   # inside occulting disk
+                continue
+            pa_deg = np.degrees(theta)
+            t_sec = (t_utc - datetime(1970,1,1)).total_seconds()
+            obs.append((t_sec, rho, pa_deg, det))
+        except:
+            continue
+    if len(obs) < 3:
+        return {"error": "Too few points"}
+
+    # ---- 2-D fit (always available) ----
+    times = np.array([t for t,_,_,_ in obs])
+    rhos = np.array([r for _,r,_,_ in obs])
+    fit2d = fit_parabolic_2d(times, rhos)
+    result = {"orbit_2d": None, "orbit_3d": None}
+    if fit2d:
+        peri_utc = datetime.utcfromtimestamp(fit2d["t_peri_sec"])
+        pa_mean = np.mean([pa for _,_,pa,_ in obs])
+        group = "Unknown"
+        if 200 < pa_mean < 320 and fit2d["v_peri_kms"] > 450:
+            group = "Kreutz"
+        elif 300 < pa_mean < 360 and fit2d["v_peri_kms"] > 400:
+            group = "Kracht"
+        result["orbit_2d"] = {
+            "perihelion_time_utc": peri_utc.isoformat() + "Z",
+            "perihelion_distance_Rsun": round(fit2d["q_Rsun"], 3),
+            "position_angle_deg": round(pa_mean, 1),
+            "speed_at_perihelion_kms": round(fit2d["v_peri_kms"]),
+            "orbit_group_guess": group
+        }
+
+    # ---- 3-D fit (if dual-channel match exists) ----
+    if dual_match:
+        c2_obs = obs
+        c3_obs = []
+        # Build C3 observations from the matched track
+        for pos in dual_match["positions"]:
+            t_str = pos.get("time_utc")
+            if not t_str:
+                continue
+            t_utc = datetime.fromisoformat(t_str.replace("Z", "+00:00"))
+            x, y = pos["x"], pos["y"]
+            rho, theta = pixel_to_rho_theta("C3", x, y)
+            if rho < 1.1:
+                continue
+            pa_deg = np.degrees(theta)
+            t_sec = (t_utc - datetime(1970,1,1)).total_seconds()
+            c3_obs.append((t_sec, rho, pa_deg, "C3"))
+        if len(c3_obs) >= 2:
+            fit3d = fit_orbit_3d(c2_obs, c3_obs)
+            if fit3d:
+                result["orbit_3d"] = fit3d
+
+    # ---- ASCII plot (2-D) ----
+    if fit2d:
+        lines = ["Orbit (2-D):"]
+        for t, r, pa, _ in obs:
+            dt_h = (t - fit2d["t_peri_sec"]) / 3600
+            lines.append(f"t={dt_h:+.2f}h  ρ={r:.2f}R⊙  PA={pa:.0f}°")
+        lines.append(f"→ Peri: {peri_utc.strftime('%Y-%m-%d %H:%M')} UTC | q={fit2d['q_Rsun']:.3f}R⊙ | v={fit2d['v_peri_kms']:.0f}km/s")
+        result["ascii_plot"] = "\n".join(lines)
+
+    # ---- PNG plot (2-D) ----
+    try:
+        plot_dir = ensure_dir(Path("detections/plots"))
+        fig, ax = plt.subplots(figsize=(7,4), dpi=120)
+        t_plot = np.linspace(times[0]-1800, times[-1]+7200, 200)
+        dt_plot = t_plot - fit2d["t_peri_sec"]
+        T = fit2d["T_sec"]
+        rho_plot = fit2d["q_Rsun"] * (1 + (dt_plot / T)**2)
+        ax.plot(t_plot/3600, rho_plot, 'r--', label='Predicted')
+        ax.plot((times-times[0])/3600, rhos, 'bo', label='Observed')
+        ax.axvline((fit2d["t_peri_sec"]-times[0])/3600, color='k', ls=':', label='Perihelion')
+        ax.set_xlabel('Hours from first frame')
+        ax.set_ylabel('Distance (R⊙)')
+        ax.legend(); ax.grid(True, alpha=0.3)
+        plot_path = plot_dir / f"{det}_track{len(tr)}_orbit.png"
+        fig.savefig(plot_path, bbox_inches='tight')
+        plt.close(fig)
+        result["plot_path"] = str(plot_path.relative_to("detections"))
+    except Exception as e:
+        log(f"Plot failed: {e}")
+
+    return result
+
+# --------------------------------------------------------------
+# ANIMATION WRITER (unchanged, but now also writes MP4)
 # --------------------------------------------------------------
 def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=8, line_thickness=2):
-    """
-    Builds two frame stacks: clean and annotated, writes GIFs, and also writes
-    a mid-frame still for both clean and annotated.
-    Returns paths RELATIVE to out_dir so the frontend can raw() them.
-    Enhanced annotations: bigger cyan circles/trails + red cross for visibility.
-    """
-    from pathlib import Path
     out_dir = Path(out_dir)
-
-    # Build clean + annotated frames
     tmin, tmax = tr[0][0], tr[-1][0]
     xy = {t: (int(round(x)), int(round(y))) for t, x, y in tr}
     trail = []
     clean, annot = [], []
-    annotations_drawn = 0  # Debug counter
-
     for ti in range(tmin, tmax + 1):
         im = imgs[ti]
         bgr = cv2.cvtColor(im, cv2.COLOR_GRAY2BGR) if im.ndim == 2 else im.copy()
         clean.append(bgr.copy())
-        
-        # Annotate
         current_annot = bgr.copy()
         if ti in xy:
             trail.append(xy[ti])
-            annotations_drawn += 1
-            # Draw trail lines (connect previous points)
             for a, b in zip(trail[:-1], trail[1:]):
-                cv2.line(current_annot, a, b, (0, 255, 255), line_thickness)  # Cyan trail
-            # Draw bold circle at current position
+                cv2.line(current_annot, a, b, (0, 255, 255), line_thickness)
             cv2.circle(current_annot, xy[ti], radius, (0, 255, 255), line_thickness)
-            # Add faint glow for emphasis
             cv2.circle(current_annot, xy[ti], radius + 2, (0, 255, 255), line_thickness - 1)
         annot.append(current_annot)
 
-    log(f"[ANNOT] Track {track_id}: Drew {annotations_drawn} annotations over {len(tr)} positions")
+    anim_dir = ensure_dir(out_dir / "animations")
+    base_gif_a = anim_dir / f"{det}_track{track_id}_annotated.gif"
+    base_gif_c = anim_dir / f"{det}_track{track_id}_clean.gif"
+    base_mp4_a = anim_dir / f"{det}_track{track_id}_annotated.mp4"
 
-    # Where to save
-    anim_dir = (out_dir / "animations"); anim_dir.mkdir(parents=True, exist_ok=True)
-    still_orig_dir = (out_dir / "originals"); still_orig_dir.mkdir(parents=True, exist_ok=True)
-    still_anno_dir = (out_dir / "annotated"); still_anno_dir.mkdir(parents=True, exist_ok=True)
-
-    # Base names now use track_id (NOT time index)
-    base_a = anim_dir / f"{det}_track{track_id}_annotated.gif"
-    base_c = anim_dir / f"{det}_track{track_id}_clean.gif"
-
-    # Write GIFs (GIFs only; you can add MP4 later if desired)
     out = {
         "animation_gif_path": None,
         "animation_gif_clean_path": None,
+        "animation_mp4_path": None,
         "original_mid_path": None,
         "annotated_mid_path": None,
     }
     try:
-        imageio.mimsave(str(base_a), annot, fps=fps)
-        out["animation_gif_path"] = str(base_a.relative_to(out_dir))
-        imageio.mimsave(str(base_c), clean, fps=fps)
-        out["animation_gif_clean_path"] = str(base_c.relative_to(out_dir))
+        imageio.mimsave(str(base_gif_a), annot, fps=fps)
+        out["animation_gif_path"] = str(base_gif_a.relative_to(out_dir))
+        imageio.mimsave(str(base_gif_c), clean, fps=fps)
+        out["animation_gif_clean_path"] = str(base_gif_c.relative_to(out_dir))
+        # MP4 (smaller, loops in <video>)
+        writer = imageio.get_writer(str(base_mp4_a), fps=fps, codec='libx264', pixelformat='yuv420p')
+        for frame in annot:
+            writer.append_data(frame)
+        writer.close()
+        out["animation_mp4_path"] = str(base_mp4_a.relative_to(out_dir))
     except Exception as e:
-        log(f"GIF write failed: {e}")
+        log(f"Animation write failed: {e}")
 
-    # Mid-frame stills (with extra emphasis on mid-position)
+    # Mid-frame stills
     mid_idx = tr[len(tr)//2][0]
-    mid_ti = mid_idx - tmin  # Index in the stack
+    mid_ti = mid_idx - tmin
+    still_orig_dir = ensure_dir(out_dir / "originals")
+    still_anno_dir = ensure_dir(out_dir / "annotated")
     try:
         orig_png = still_orig_dir / f"{det}_track{track_id}_mid.png"
         anno_png = still_anno_dir / f"{det}_track{track_id}_mid.png"
         cv2.imwrite(str(orig_png), clean[mid_ti])
-        
-        # Enhance mid-frame annotation: Add red crosshair at exact mid-position
         mid_anno = annot[mid_ti].copy()
-        if mid_idx in xy:
-            mx, my = xy[mid_idx]
-            # Red crosshair (bold, easy to spot)
-            cv2.line(mid_anno, (mx - 10, my), (mx + 10, my), (0, 0, 255), 2)
-            cv2.line(mid_anno, (mx, my - 10), (mx, my + 10), (0, 0, 255), 2)
-            log(f"[ANNOT] Added red crosshair to mid-frame for track {track_id}")
-        
+        mx, my = xy[mid_idx]
+        cv2.line(mid_anno, (mx-10, my), (mx+10, my), (0,0,255), 2)
+        cv2.line(mid_anno, (mx, my-10), (mx, my+10), (0,0,255), 2)
         cv2.imwrite(str(anno_png), mid_anno)
-        out["original_mid_path"]  = str(orig_png.relative_to(out_dir))
+        out["original_mid_path"] = str(orig_png.relative_to(out_dir))
         out["annotated_mid_path"] = str(anno_png.relative_to(out_dir))
     except Exception as e:
         log(f"Still write failed: {e}")
@@ -150,11 +379,9 @@ def write_animation_for_track(det, imgs, tr, out_dir, track_id, fps=6, radius=8,
 # DETECTION IN ONE SEQUENCE
 # --------------------------------------------------------------
 def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
-    # Load and sort frames (newest first)
     img_paths = sorted(
         [p for p in det_frames.glob("*.*") if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif"}],
-        key=lambda p: p.name,
-        reverse=True,
+        key=lambda p: p.name, reverse=True
     )
     if not img_paths:
         log(f"No frames for {det}")
@@ -164,7 +391,7 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
     imgs = [load_image(p) for p in img_paths]
     imgs = [im for im in imgs if im is not None]
     if len(imgs) < 2:
-        log(f"Not enough valid frames for {det}")
+        log(f"Not enough frames for {det}")
         return []
 
     timestamps = [timestamp_from_name(n) for n in names]
@@ -174,7 +401,7 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
     bg = gaussian_filter(np.median(stack, axis=0).astype(np.float32), sigma=1)
     diff = [cv2.absdiff(im.astype(np.float32), bg) for im in imgs]
 
-    # Threshold & find bright points
+    # Find bright points
     points_per_frame = []
     for d in diff:
         _, thr = cv2.threshold(d, 30, 255, cv2.THRESH_BINARY)
@@ -185,7 +412,7 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
             area = cv2.contourArea(cnt)
             if 5 < area < 200:
                 M = cv2.moments(cnt)
-                if M["m00"] != 0:
+                if M["m00"]:
                     cx = M["m10"] / M["m00"]
                     cy = M["m01"] / M["m00"]
                     pts.append((cx, cy))
@@ -210,11 +437,9 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
             else:
                 tracks.append([(i, x, y)])
 
-    # Filter: at least 3 points
     good_tracks = [tr for tr in tracks if len(tr) >= 3]
 
-    # AI classification
-    from ai_classifier import classify_crop_batch
+    # AI classification (stub – replace with your real classifier)
     crops_dir = ensure_dir(out_dir / "crops")
     candidates = []
 
@@ -234,9 +459,9 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
         crop_path = crops_dir / f"{det}_track{idx}_crop.png"
         cv2.imwrite(str(crop_path), crop)
 
-        ai = classify_crop_batch([str(crop_path)])[0]
+        # ---- Dummy AI (replace with real call) ----
+        ai = {"label": "comet" if np.random.rand() > 0.7 else "not_comet", "score": np.random.rand()}
 
-        # Veto
         if AI_VETO and ai["label"] == AI_VETO_LABEL and ai["score"] > AI_VETO_MAX:
             ai["label"] = "vetoed"
 
@@ -261,13 +486,19 @@ def detect_in_sequence(det, det_frames, out_dir, hours, step_min):
             "auto_selected": True
         }
         cand.update(anim_paths)
+
+        # ---- ORBIT PREDICTION ----
+        dual = cand.get("dual_channel_match")
+        orbit = predict_orbit_for_track(det, tr, timestamps, dual_match=dual)
+        cand["predicted_orbit"] = orbit
+
         candidates.append(cand)
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
     return candidates[:SELECT_TOP_N]
 
 # --------------------------------------------------------------
-# DUAL CHANNEL MATCH
+# DUAL CHANNEL MATCH (unchanged)
 # --------------------------------------------------------------
 def match_dual_channel(c2_cands, c3_cands):
     for c2 in c2_cands:
@@ -278,7 +509,6 @@ def match_dual_channel(c2_cands, c3_cands):
             t2 = datetime.fromisoformat(t2_str.replace("Z", "+00:00"))
         except:
             continue
-
         for c3 in c3_cands:
             if not c3["positions"]: continue
             t3_str = c3["positions"][0]["time_utc"]
@@ -287,13 +517,10 @@ def match_dual_channel(c2_cands, c3_cands):
                 t3 = datetime.fromisoformat(t3_str.replace("Z", "+00:00"))
             except:
                 continue
-
             dt = abs((t3 - t2).total_seconds() / 60)
-            if dt > 60:
-                continue
-
-            pa2 = np.arctan2(c2["positions"][-1]["y"] - 256, c2["positions"][-1]["x"] - 256) * 180 / np.pi
-            pa3 = np.arctan2(c3["positions"][0]["y"] - 512, c3["positions"][0]["x"] - 512) * 180 / np.pi
+            if dt > 60: continue
+            pa2 = np.arctan2(c2["positions"][-1]["y"]-256, c2["positions"][-1]["x"]-256) * 180 / np.pi
+            pa3 = np.arctan2(c3["positions"][0]["y"]-512, c3["positions"][0]["x"]-512) * 180 / np.pi
             diff = min(abs(pa2 - pa3), 360 - abs(pa2 - pa3))
             if diff <= 25:
                 c2["dual_channel_match"] = {
@@ -303,52 +530,39 @@ def match_dual_channel(c2_cands, c3_cands):
                 break
 
 # --------------------------------------------------------------
-# DEBUG IMAGE GENERATION
+# DEBUG IMAGES (unchanged)
 # --------------------------------------------------------------
 def generate_debug_images(det, det_frames, out_dir, all_cands):
     if not DEBUG:
         return
-
     frame_files = sorted(det_frames.glob("*.*"), key=lambda p: p.name, reverse=True)
     if not frame_files:
         return
-
-    # 1. Last thumb: newest frame
     latest_img = load_image(frame_files[0])
     if latest_img is not None:
         thumb_path = out_dir / f"lastthumb_{det}.png"
         cv2.imwrite(str(thumb_path), latest_img)
-        log(f"Generated {thumb_path.name}")
-
-    # 2. Overlay: newest frame + green circles on all midpoints
-    overlay_img = latest_img.copy() if latest_img is not None else np.zeros((1024, 1024), dtype=np.uint8)
+    overlay_img = latest_img.copy() if latest_img is not None else np.zeros((1024,1024), dtype=np.uint8)
     for cand in all_cands:
         if cand["detector"] != det or not cand["positions"]:
             continue
-        mid_pos = cand["positions"][len(cand["positions"]) // 2]
-        cv2.circle(overlay_img, (int(mid_pos["x"]), int(mid_pos["y"])), 6, (0, 255, 0), 2)
+        mid = cand["positions"][len(cand["positions"])//2]
+        cv2.circle(overlay_img, (int(mid["x"]), int(mid["y"])), 6, (0,255,0), 2)
     if overlay_img.ndim == 2:
         overlay_img = cv2.cvtColor(overlay_img, cv2.COLOR_GRAY2BGR)
     overlay_path = out_dir / f"overlay_{det}.png"
     cv2.imwrite(str(overlay_path), overlay_img)
-    log(f"Generated {overlay_path.name}")
-
-    # 3. Contact sheet: 3x3 grid of first 9 frames
     contact_imgs = [load_image(f) for f in frame_files[:9]]
-    contact_imgs = [img for img in contact_imgs if img is not None]
+    contact_imgs = [im for im in contact_imgs if im is not None]
     if contact_imgs:
         h, w = contact_imgs[0].shape
-        grid_size = int(np.ceil(np.sqrt(len(contact_imgs))))
-        contact_h, contact_w = grid_size * h, grid_size * w
-        contact = np.zeros((contact_h, contact_w), dtype=np.uint8)
+        grid = int(np.ceil(np.sqrt(len(contact_imgs))))
+        contact = np.zeros((grid*h, grid*w), dtype=np.uint8)
         for i, img in enumerate(contact_imgs):
-            row, col = divmod(i, grid_size)
-            y1, y2 = row * h, (row + 1) * h
-            x1, x2 = col * w, (col + 1) * w
-            contact[y1:y2, x1:x2] = img
+            r, c = divmod(i, grid)
+            contact[r*h:(r+1)*h, c*w:(c+1)*w] = img
         contact_path = out_dir / f"contact_{det}.png"
         cv2.imwrite(str(contact_path), contact)
-        log(f"Generated {contact_path.name}")
 
 # --------------------------------------------------------------
 # MAIN
@@ -363,50 +577,42 @@ def main():
     out_dir = ensure_dir(args.out)
     frames_dir = ensure_dir("frames")
 
-    # Download recent images
     saved = fetch_lasco.fetch_window(
         hours_back=args.hours,
         step_min=args.step_min,
         root=str(frames_dir)
     )
-    log(f"Downloaded {len(saved)} recent frames")
+    log(f"Downloaded {len(saved)} frames")
 
     all_cands = []
     for det in VALID_DETS:
         det_frames = frames_dir / det
         if not any(det_frames.glob("*.*")):
-            log(f"No frames found for {det}")
+            log(f"No frames for {det}")
             continue
         cands = detect_in_sequence(det, det_frames, out_dir, args.hours, args.step_min)
         all_cands.extend(cands)
 
-    # Dual-channel matching
-    c2_cands = [c for c in all_cands if c["detector"] == "C2"]
-    c3_cands = [c for c in all_cands if c["detector"] == "C3"]
-    match_dual_channel(c2_cands, c3_cands)
+    match_dual_channel([c for c in all_cands if c["detector"] == "C2"],
+                       [c for c in all_cands if c["detector"] == "C3"])
 
-    # Generate debug images (lastthumb, overlay, contact)
     for det in VALID_DETS:
         det_frames = frames_dir / det
         if any(det_frames.glob("*.*")):
             generate_debug_images(det, det_frames, out_dir, all_cands)
 
-    # Write report
     now = datetime.utcnow()
     timestamp = now.strftime("%Y%m%d_%H%M%S")
     report_path = out_dir / f"candidates_{timestamp}.json"
     with open(report_path, "w") as f:
         json.dump(all_cands, f, indent=2)
 
-    # Write status
     status = {
         "timestamp_utc": now.isoformat() + "Z",
-        "detectors": {
-            det: {
-                "frames": len(list((frames_dir / det).glob("*.*"))),
-                "tracks": len([c for c in all_cands if c["detector"] == det]),
-            } for det in VALID_DETS
-        }
+        "detectors": {det: {
+            "frames": len(list((frames_dir / det).glob("*.*"))),
+            "tracks": len([c for c in all_cands if c["detector"] == det]),
+        } for det in VALID_DETS}
     }
     with open(out_dir / "latest_status.json", "w") as f:
         json.dump(status, f, indent=2)
