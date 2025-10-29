@@ -113,6 +113,7 @@ def fit_parabolic_2d(times_sec, rho_obs):
     res = least_squares(
         parabolic_residuals_2d,
         x0=[q0, t_peri0],
+        args=(times_sec, rho_obs),
         bounds=([0.5, times_sec[0]-7200], [20, times_sec[-1]+7200])
     )
     if not res.success:
