@@ -3,7 +3,6 @@ name: SOHO Comet Hunt
 on:
   schedule:
     - cron: "0 * * * *"
-
   workflow_dispatch:
 
 permissions:
@@ -116,10 +115,39 @@ jobs:
           fi
 
       # --------------------------------------------------------------
-      # 4. PULL REMOTE CHANGES (now safe — changes are committed)
+      # 7. PURGE DATA OLDER THAN 7 DAYS
+      # --------------------------------------------------------------
+      - name: Purge old detections (older than 7 days)
+        id: purge
+        run: |
+          set -e
+
+          mapfile -t OLD_FILES < <(find detections -type f -mtime +7 -print)
+
+          if [[ ${#OLD_FILES[@]} -eq 0 ]]; then
+            echo "No files older than 7 days – nothing to purge."
+            echo "purged=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Removing ${#OLD_FILES[@]} file(s) older than 7 days..."
+          printf '  - %s\n' "${OLD_FILES[@]}"
+
+          printf '%s\0' "${OLD_FILES[@]}" | xargs -0 rm -f
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add detections
+          git commit -m "Auto-purge: remove detections older than 7 days [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
+
+          echo "purged=true" >> $GITHUB_OUTPUT
+
+      # --------------------------------------------------------------
+      # 4. PULL REMOTE CHANGES (safe after commit or purge)
       # --------------------------------------------------------------
       - name: Pull latest remote changes
-        if: steps.commit.outputs.committed == 'true'
+        if: steps.commit.outputs.committed == 'true' || steps.purge.outputs.purged == 'true'
         run: |
           git fetch origin
           git rebase origin/main || (git rebase --abort && exit 1)
@@ -128,7 +156,7 @@ jobs:
       # 5. PUSH (safe with force-with-lease)
       # --------------------------------------------------------------
       - name: Push changes
-        if: steps.commit.outputs.committed == 'true'
+        if: steps.commit.outputs.committed == 'true' || steps.purge.outputs.purged == 'true'
         run: |
           git push origin HEAD:main --force-with-lease
 
