@@ -58,19 +58,22 @@ def list_soho_frames(instrument: str, hours: int) -> list:
     start = now - timedelta(hours=hours)
     urls = []
 
-    # SOHO publishes images roughly every 12 min – round to nearest interval
-    ts = start.replace(second=0, microsecond=0)
+    # Start from the most recent 12-min interval and go backward
+    ts = now.replace(second=0, microsecond=0)
     minute = (ts.minute // 12) * 12
     ts = ts.replace(minute=minute)
 
-    while ts <= now:
+    while ts >= start:
         stamp = ts.strftime("%Y%m%d_%H%M")
         month_path = ts.strftime("%m")
-        url = f"{base}{ts.year}/{month_path}/{stamp}_{instrument.lower()}_1024.jpg"
+        instr_lower = instrument.lower()
+        # CORRECT FORMAT: 20251030_1000c2_1024.jpg  (no underscore before c2)
+        filename = f"{stamp}{instr_lower}_1024.jpg"
+        url = f"{base}{ts.year}/{month_path}/{filename}"
         urls.append((ts, url))
-        ts += timedelta(minutes=12)
+        ts -= timedelta(minutes=12)  # Go backward to avoid future timestamps
 
-    return urls
+    return urls[::-1]  # Return in chronological order
 
 
 def fetch_frames(instruments, hours, out_dir):
