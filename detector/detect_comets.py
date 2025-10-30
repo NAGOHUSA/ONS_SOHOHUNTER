@@ -3,38 +3,36 @@
 SOHO Comet Hunter – detector/detect_comets.py
 ------------------------------------------------
 Detects moving objects (comets) in a sequence of SOHO C2/C3 frames.
+Now uses CORRECT SOHO URL format with underscore before instrument.
 """
 
 import argparse
 import json
 import os
 import sys
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import cv2
-import imageio
 import numpy as np
 import requests
 from filterpy.kalman import KalmanFilter
 from scipy.ndimage import gaussian_filter
+from typing import Optional
 
 # ----------------------------------------------------------------------
-# Configuration (tweakable)
+# Configuration
 # ----------------------------------------------------------------------
-MIN_CROP_SIZE = 16          # skip crops smaller than this
-BORDER_WIDTH = 8            # how many pixels from the edge are considered "border"
-MIN_TRACK_LEN = 3           # minimum frames a track must appear in
-MAX_GAP = 2                 # allow up to this many missing frames in a track
-IOU_THRESH = 0.3            # IoU for associating detections across frames
-BRIGHTNESS_THRESH = 0.15     # fraction of max brightness for a candidate
-VELOCITY_LIMIT = 30         # max pixel displacement per step (prevents noise)
+MIN_CROP_SIZE = 16
+BORDER_WIDTH = 8
+MIN_TRACK_LEN = 3
+MAX_GAP = 2
+IOU_THRESH = 0.3
 DEBUG = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
 
 # ----------------------------------------------------------------------
-# Helper functions
+# Helpers
 # ----------------------------------------------------------------------
 def download_image(url: str, dest: Path) -> bool:
     """Download a single image, return True on success."""
@@ -52,34 +50,40 @@ def download_image(url: str, dest: Path) -> bool:
 
 
 def list_soho_frames(instrument: str, hours: int) -> list:
-    """Return a list of (timestamp, url) for the last `hours` of frames."""
-    base = f"https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/{instrument}/"
+    """
+    Generate (timestamp, url) for the last `hours` using CORRECT SOHO path.
+    Example:
+        https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/2025/c2/20251030/20251030_1048_c2_1024.jpg
+    """
     now = datetime.utcnow()
     start = now - timedelta(hours=hours)
-    urls = []
+    frames = []
 
-    # Start from the most recent 12-min interval and go backward
+    # Start from current time, round down to nearest 12-min interval
     ts = now.replace(second=0, microsecond=0)
     minute = (ts.minute // 12) * 12
     ts = ts.replace(minute=minute)
 
     while ts >= start:
-        stamp = ts.strftime("%Y%m%d_%H%M")
-        month_path = ts.strftime("%m")
-        instr_lower = instrument.lower()
-        # CORRECT FORMAT: 20251030_1000c2_1024.jpg  (no underscore before c2)
-        filename = f"{stamp}{instr_lower}_1024.jpg"
-        url = f"{base}{ts.year}/{month_path}/{filename}"
-        urls.append((ts, url))
-        ts -= timedelta(minutes=12)  # Go backward to avoid future timestamps
+        stamp = ts.strftime("%Y%m%d_%H%M")        # e.g., 20251030_1048
+        year_dir = str(ts.year)                   # 2025
+        instr_dir = instrument.lower()            # c2 or c3
+        date_dir = stamp[:8]                      # 20251030
+        filename = f"{stamp}_{instr_dir}_1024.jpg" # 20251030_1048_c2_1024.jpg
 
-    return urls[::-1]  # Return in chronological order
+        url = (
+            f"https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/"
+            f"{year_dir}/{instr_dir}/{date_dir}/{filename}"
+        )
+        frames.append((ts, url))
+        ts -= timedelta(minutes=12)
+
+    return frames
 
 
 def fetch_frames(instruments, hours, out_dir):
     """
-    Download frames for all instruments.
-    Only keeps paths that actually exist on disk.
+    Download frames. Only append successful downloads.
     """
     frames = {}
     out_dir = Path(out_dir)
@@ -88,27 +92,27 @@ def fetch_frames(instruments, hours, out_dir):
     for instr in instruments:
         frames[instr] = []
         for ts, url in list_soho_frames(instr, hours):
-            fname = f"{instr}_{ts.strftime('%Y%m%d_%H%M')}_{instr.lower()}_1024.jpg"
-            fpath = out_dir / fname
+            stamp = ts.strftime("%Y%m%d_%H%M")
+            filename = f"{instr}_{stamp}_{instr.lower()}_1024.jpg"  # Local: C2_20251030_1048_c2_1024.jpg
+            fpath = out_dir / filename
 
             if fpath.exists():
                 if DEBUG:
-                    print(f"[fetch:{instr}] cached {fname}")
+                    print(f"[fetch:{instr}] cached {filename}")
                 frames[instr].append((ts, str(fpath)))
                 continue
 
             if download_image(url, fpath):
-                print(f"[fetch:{instr}] saved {fname}")
+                print(f"[fetch:{instr}] saved {filename}")
                 frames[instr].append((ts, str(fpath)))
             else:
                 if DEBUG:
-                    print(f"[fetch:{instr}] skipped (failed) {fname}")
+                    print(f"[fetch:{instr}] failed {url}")
 
     return frames
 
 
 def preprocess(img_path: str) -> np.ndarray:
-    """Load, grayscale, CLAHE, Gaussian blur."""
     img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise ValueError(f"Cannot read {img_path}")
@@ -119,14 +123,12 @@ def preprocess(img_path: str) -> np.ndarray:
 
 
 def subtract_background(ref: np.ndarray, cur: np.ndarray) -> np.ndarray:
-    """Simple background subtraction with a little smoothing."""
     diff = cv2.absdiff(cur, ref)
     diff = gaussian_filter(diff, sigma=0.5)
     return diff
 
 
 def find_candidates(diff: np.ndarray, thresh=30) -> list:
-    """Threshold + contour detection -> bounding boxes."""
     _, thr = cv2.threshold(diff.astype(np.uint8), thresh, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cands = []
@@ -140,18 +142,13 @@ def find_candidates(diff: np.ndarray, thresh=30) -> list:
 
 def crop_image(img: np.ndarray, box) -> np.ndarray:
     x, y, w, h = box
-    return img[y : y + h, x : x + w]
+    return img[y:y+h, x:x+w]
 
 
 def extract_border(crop: np.ndarray, width: int = BORDER_WIDTH) -> np.ndarray:
-    """
-    Return a mask that contains only the outer `width` pixels of the crop.
-    Replaces the broken np.concatenate() call.
-    """
     h, w = crop.shape
     if h < MIN_CROP_SIZE or w < MIN_CROP_SIZE:
         return np.array([])
-
     border = np.zeros((h, w), dtype=crop.dtype)
     border[:width, :] = crop[:width, :]
     border[-width:, :] = crop[-width:, :]
@@ -161,13 +158,14 @@ def extract_border(crop: np.ndarray, width: int = BORDER_WIDTH) -> np.ndarray:
 
 
 def border_stats(border: np.ndarray) -> dict:
-    """Mean / std of the border region – used to reject noisy detections."""
     if border.size == 0:
         return {"mean": 0.0, "std": 0.0}
     flat = border.flatten()
     flat = flat[flat > 0]
-    return {"mean": float(flat.mean()) if flat.size > 0 else 0.0,
-            "std": float(flat.std()) if flat.size > 0 else 0.0}
+    return {
+        "mean": float(flat.mean()) if flat.size > 0 else 0.0,
+        "std": float(flat.std()) if flat.size > 0 else 0.0
+    }
 
 
 def iou(boxA, boxB):
@@ -182,7 +180,6 @@ def iou(boxA, boxB):
 
 
 def associate_tracks(prev_tracks, curr_cands):
-    """Greedy IoU association + Kalman update."""
     new_tracks = []
     used = set()
 
@@ -255,7 +252,7 @@ def save_candidate(crop, out_dir, ts, box, idx):
 
 
 # ----------------------------------------------------------------------
-# Main detection routine
+# Detection
 # ----------------------------------------------------------------------
 def detect_in_sequence(detector_frames, out_dir, hours, step_min):
     out_dir = Path(out_dir)
@@ -264,7 +261,7 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
     candidates = []
     tracks = []
 
-    # Use the *newest* valid frame of each instrument as reference background
+    # Use newest frame per instrument as reference
     ref = {}
     for instr, flist in detector_frames.items():
         if not flist:
@@ -273,14 +270,13 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
         try:
             ref[instr] = preprocess(latest_path)
         except ValueError as e:
-            print(f"[error] Could not load reference for {instr}: {e}")
+            print(f"[error] Reference failed for {instr}: {e}")
             continue
 
     if not ref:
-        print("No valid reference images – aborting detection.")
+        print("No valid reference images.")
         return [], []
 
-    # Process frames in chronological order
     all_frames = []
     for instr, flist in detector_frames.items():
         all_frames.extend([(ts, path, instr) for ts, path in flist])
@@ -299,7 +295,6 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
 
         bg = ref.get(instr, cur)
         diff = subtract_background(bg, cur)
-
         raw_cands = find_candidates(diff)
         frame_cands = []
 
@@ -308,12 +303,11 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
             if crop.size == 0:
                 continue
 
-            border = extract_border(crop, width=BORDER_WIDTH)
+            border = extract_border(crop)
             bstats = border_stats(border)
-
             if bstats["std"] > 30:
                 if DEBUG:
-                    print(f"[debug] skip noisy border std={bstats['std']:.1f}")
+                    print(f"[debug] noisy border std={bstats['std']:.1f}")
                 continue
 
             crop_path = save_candidate(
@@ -335,20 +329,19 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
         candidates.extend(frame_cands)
 
     good_tracks = [t for t in tracks if t["age"] >= MIN_TRACK_LEN]
-
     return candidates, good_tracks
 
 
 # ----------------------------------------------------------------------
-# CLI entry point
+# CLI
 # ----------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="SOHO Comet Hunter detector")
     parser.add_argument("--hours", type=int, default=6, help="Look-back hours")
-    parser.add_argument("--step-min", type=int, default=12, help="Minimum step between processed frames (minutes)")
+    parser.add_argument("--step-min", type=int, default=12, help="Step between frames (minutes)")
     parser.add_argument("--out", type=str, default="detections", help="Output directory")
     parser.add_argument("--instruments", nargs="+", default=["C2", "C3"],
-                        help="SOHO instruments to monitor")
+                        help="Instruments to monitor")
     args = parser.parse_args()
 
     frames_dir = Path("frames")
@@ -360,24 +353,20 @@ def main():
     total = sum(len(v) for v in detector_frames.values())
     print(f"[fetch] summary: saved {total} file(s)")
 
-    # Filter out instruments with no valid frames
     valid_frames = {k: v for k, v in detector_frames.items() if v}
     if not valid_frames:
-        print("No valid frames downloaded. Exiting early.")
+        print("No frames downloaded. Exiting.")
         return
 
     print("Running detection sequence...")
-    cands, tracks = detect_in_sequence(
-        valid_frames, args.out, args.hours, args.step_min
-    )
+    cands, tracks = detect_in_sequence(valid_frames, args.out, args.hours, args.step_min)
 
-    # Save candidate JSON
+    # Save results
     out_path = Path(args.out) / f"candidates_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(cands, f, indent=2)
 
-    # Save track summary
     track_path = Path(args.out) / f"tracks_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.json"
     with open(track_path, "w") as f:
         json.dump([{
@@ -388,7 +377,7 @@ def main():
         } for t in tracks], f, indent=2)
 
     print(f"Detection complete -> {len(cands)} candidates, {len(tracks)} tracks")
-    print(f"Results written to {args.out}")
+    print(f"Results in {args.out}")
 
 
 if __name__ == "__main__":
