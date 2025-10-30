@@ -58,29 +58,49 @@ def list_soho_frames(instrument: str, hours: int) -> list:
     start = now - timedelta(hours=hours)
     urls = []
 
-    # SOHO publishes images roughly every 12 min
-    ts = start
+    # SOHO publishes images roughly every 12 min – round to nearest interval
+    ts = start.replace(second=0, microsecond=0)
+    minute = (ts.minute // 12) * 12
+    ts = ts.replace(minute=minute)
+
     while ts <= now:
         stamp = ts.strftime("%Y%m%d_%H%M")
-        url = f"{base}{ts.year}/{ts.strftime('%m')}/{stamp}_{instrument.lower()}_1024.jpg"
+        month_path = ts.strftime("%m")
+        url = f"{base}{ts.year}/{month_path}/{stamp}_{instrument.lower()}_1024.jpg"
         urls.append((ts, url))
         ts += timedelta(minutes=12)
+
     return urls
 
 
 def fetch_frames(instruments, hours, out_dir):
-    """Download frames for all instruments."""
+    """
+    Download frames for all instruments.
+    Only keeps paths that actually exist on disk.
+    """
     frames = {}
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     for instr in instruments:
         frames[instr] = []
         for ts, url in list_soho_frames(instr, hours):
             fname = f"{instr}_{ts.strftime('%Y%m%d_%H%M')}_{instr.lower()}_1024.jpg"
-            fpath = Path(out_dir) / "frames" / fname
-            if not fpath.exists() and download_image(url, fpath):
+            fpath = out_dir / fname
+
+            if fpath.exists():
+                if DEBUG:
+                    print(f"[fetch:{instr}] cached {fname}")
+                frames[instr].append((ts, str(fpath)))
+                continue
+
+            if download_image(url, fpath):
                 print(f"[fetch:{instr}] saved {fname}")
                 frames[instr].append((ts, str(fpath)))
             else:
-                frames[instr].append((ts, str(fpath)))
+                if DEBUG:
+                    print(f"[fetch:{instr}] skipped (failed) {fname}")
+
     return frames
 
 
@@ -123,16 +143,15 @@ def crop_image(img: np.ndarray, box) -> np.ndarray:
 def extract_border(crop: np.ndarray, width: int = BORDER_WIDTH) -> np.ndarray:
     """
     Return a mask that contains only the outer `width` pixels of the crop.
-    This replaces the broken np.concatenate() call.
+    Replaces the broken np.concatenate() call.
     """
     h, w = crop.shape
     if h < MIN_CROP_SIZE or w < MIN_CROP_SIZE:
-        return np.array([])  # will be skipped later
+        return np.array([])
 
     border = np.zeros((h, w), dtype=crop.dtype)
     border[:width, :] = crop[:width, :]
     border[-width:, :] = crop[-width:, :]
-    # middle parts of left/right columns (avoid double-counting corners)
     border[width:-width, :width] = crop[width:-width, :width]
     border[width:-width, -width:] = crop[width:-width, -width:]
     return border
@@ -143,9 +162,9 @@ def border_stats(border: np.ndarray) -> dict:
     if border.size == 0:
         return {"mean": 0.0, "std": 0.0}
     flat = border.flatten()
-    # ignore zero-pixels (background)
     flat = flat[flat > 0]
-    return {"mean": float(flat.mean()), "std": float(flat.std())}
+    return {"mean": float(flat.mean()) if flat.size > 0 else 0.0,
+            "std": float(flat.std()) if flat.size > 0 else 0.0}
 
 
 def iou(boxA, boxB):
@@ -176,21 +195,18 @@ def associate_tracks(prev_tracks, curr_cands):
                 best_idx = i
 
         if best_iou > IOU_THRESH and best_idx != -1:
-            # update existing track
             cand = curr_cands[best_idx]
             trk["bbox"] = cand["bbox"]
             trk["crop_path"] = cand["crop_path"]
             trk["frame_idx"] = cand["frame_idx"]
             trk["age"] += 1
             trk["missed"] = 0
-            # simple Kalman (position only)
             trk["kf"].predict()
             trk["kf"].update(np.array([[cand["bbox"][0] + cand["bbox"][2] / 2],
                                        [cand["bbox"][1] + cand["bbox"][3] / 2]]))
             new_tracks.append(trk)
             used.add(best_idx)
         else:
-            # predict forward
             trk["kf"].predict()
             pred_x = int(trk["kf"].x[0])
             pred_y = int(trk["kf"].x[1])
@@ -200,7 +216,6 @@ def associate_tracks(prev_tracks, curr_cands):
             if trk["missed"] <= MAX_GAP:
                 new_tracks.append(trk)
 
-    # start new tracks for unused candidates
     for i, cand in enumerate(curr_cands):
         if i in used:
             continue
@@ -236,17 +251,6 @@ def save_candidate(crop, out_dir, ts, box, idx):
     return str(crop_path.resolve())
 
 
-def make_animation(track, frames_dir, out_dir):
-    """Create a short GIF/MP4 of the track."""
-    imgs = []
-    for hist_box in track["history"]:
-        # find the frame that contains this bbox
-        # (simplified – we just load the corresponding timestamped frame)
-        # In a real run we would keep a map ts → frame_path
-        pass  # placeholder – not critical for the bugfix
-    # ... build animation with imageio ...
-
-
 # ----------------------------------------------------------------------
 # Main detection routine
 # ----------------------------------------------------------------------
@@ -257,13 +261,21 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
     candidates = []
     tracks = []
 
-    # Use the *newest* frame of each instrument as reference background
+    # Use the *newest* valid frame of each instrument as reference background
     ref = {}
     for instr, flist in detector_frames.items():
         if not flist:
             continue
         latest_path = max(flist, key=lambda x: x[0])[1]
-        ref[instr] = preprocess(latest_path)
+        try:
+            ref[instr] = preprocess(latest_path)
+        except ValueError as e:
+            print(f"[error] Could not load reference for {instr}: {e}")
+            continue
+
+    if not ref:
+        print("No valid reference images – aborting detection.")
+        return [], []
 
     # Process frames in chronological order
     all_frames = []
@@ -271,14 +283,17 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
         all_frames.extend([(ts, path, instr) for ts, path in flist])
     all_frames.sort(key=lambda x: x[0])
 
-    prev_img = None
     for idx, (ts, fpath, instr) in enumerate(all_frames):
-        if idx % (step_min // 12) != 0:   # honour --step-min
+        if idx % (step_min // 12) != 0:
             continue
 
-        cur = preprocess(fpath)
+        try:
+            cur = preprocess(fpath)
+        except ValueError:
+            if DEBUG:
+                print(f"[skip] Corrupt frame {fpath}")
+            continue
 
-        # background subtraction
         bg = ref.get(instr, cur)
         diff = subtract_background(bg, cur)
 
@@ -290,11 +305,9 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
             if crop.size == 0:
                 continue
 
-            # ---- BORDER ANALYSIS (fixed) ----
             border = extract_border(crop, width=BORDER_WIDTH)
             bstats = border_stats(border)
 
-            # Simple heuristic: if border is too noisy -> artifact
             if bstats["std"] > 30:
                 if DEBUG:
                     print(f"[debug] skip noisy border std={bstats['std']:.1f}")
@@ -315,22 +328,10 @@ def detect_in_sequence(detector_frames, out_dir, hours, step_min):
             }
             frame_cands.append(cand)
 
-        # ---- TRACK ASSOCIATION ----
         tracks = associate_tracks(tracks, frame_cands)
-
-        # ---- SAVE INTERMEDIATE CANDIDATES ----
         candidates.extend(frame_cands)
 
-        prev_img = cur
-
-    # ------------------------------------------------------------------
-    # Filter tracks that survived long enough
-    # ------------------------------------------------------------------
     good_tracks = [t for t in tracks if t["age"] >= MIN_TRACK_LEN]
-
-    # (optional) generate animations for good tracks
-    # for trk in good_tracks:
-    #     make_animation(trk, "frames", out_dir / "animations")
 
     return candidates, good_tracks
 
@@ -356,12 +357,18 @@ def main():
     total = sum(len(v) for v in detector_frames.values())
     print(f"[fetch] summary: saved {total} file(s)")
 
+    # Filter out instruments with no valid frames
+    valid_frames = {k: v for k, v in detector_frames.items() if v}
+    if not valid_frames:
+        print("No valid frames downloaded. Exiting early.")
+        return
+
     print("Running detection sequence...")
     cands, tracks = detect_in_sequence(
-        detector_frames, args.out, args.hours, args.step_min
+        valid_frames, args.out, args.hours, args.step_min
     )
 
-    # Save candidate JSON (one file per run)
+    # Save candidate JSON
     out_path = Path(args.out) / f"candidates_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
