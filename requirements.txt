@@ -1,0 +1,10 @@
+opencv-python-headless
+numpy
+requests
+pillow
+filterpy
+scipy
+imageio
+imageio-ffmpeg
+astropy
+beautifulsoup4
