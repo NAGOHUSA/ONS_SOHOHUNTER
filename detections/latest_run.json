@@ -1,8 +1,8 @@
 {
-  "last_run_utc": "2025-10-31T21:08:32Z",
+  "last_run_utc": "2025-10-31T21:17:59Z",
   "frames_downloaded": {
-    "lasco": 7,
+    "lasco": 28,
     "goes": 0
   },
-  "candidates_found": 48
+  "candidates_found": 310
 }
