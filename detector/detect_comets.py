@@ -2,10 +2,10 @@
 """
 detect_comets.py
 ----------------
-Download latest LASCO C2/C3 images, run AI detection,
-and ALWAYS write:
-  - detections/latest_status.json
-  - detections/latest_run.json
+Download LASCO C2/C3 frames, run AI (placeholder), write:
+  • detections/latest_status.json   (frames + time-range)
+  • detections/latest_run.json     (proof the bot ran)
+  • detections/candidates_*.json   (only if comets)
 """
 
 import os
@@ -24,7 +24,6 @@ OUT_DIR = Path(os.getenv("OUT", "detections"))
 FRAMES_DIR = Path("frames")
 DEBUG = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
-# CORRECT LASCO URLS (no /1024/ folder)
 C2_URL = (
     "https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/"
     "{year}/c2/{date}/{date}_{time}_c2_1024.jpg"
@@ -44,20 +43,20 @@ def run_cmd(cmd):
     if DEBUG:
         log("RUN:", cmd)
     result = subprocess.run(
-        cmd, shell=True, capture_output=True, text=True,
-        cwd=Path.cwd()
+        cmd, shell=True, capture_output=True, text=True, cwd=Path.cwd()
     )
     if result.returncode != 0 and DEBUG:
         log("CMD FAILED:", result.stderr)
     return result.stdout
 
 # ----------------------------------------------------------------------
-# DOWNLOAD FRAMES
+# DOWNLOAD FRAMES + TIMESTAMPS
 # ----------------------------------------------------------------------
 def download_frames():
     now = datetime.utcnow()
     start = now - timedelta(hours=HOURS)
     frames = {"C2": [], "C3": []}
+    timestamps = {"C2": [], "C3": []}
     downloaded = {"C2": 0, "C3": 0}
 
     for instr in ("C2", "C3"):
@@ -72,12 +71,14 @@ def download_frames():
             date_str = t.strftime("%Y%m%d")
             time_str = t.strftime("%H%M")
             year = t.year
+            iso_time = t.strftime("%Y-%m-%dT%H:%M:00Z")
 
             url = url_tmpl.format(year=year, date=date_str, time=time_str)
             path = FRAMES_DIR / f"{instr}_{date_str}_{time_str}.jpg"
 
             if path.exists():
                 frames[instr].append(str(path))
+                timestamps[instr].append(iso_time)
                 downloaded[instr] += 1
                 continue
 
@@ -95,30 +96,59 @@ def download_frames():
                 path.write_bytes(resp.content)
                 log(f"  Saved {path.name}")
                 frames[instr].append(str(path))
+                timestamps[instr].append(iso_time)
                 downloaded[instr] += 1
             except Exception as e:
                 log(f"  Download error: {e}")
 
         log(f"{instr}: {downloaded[instr]} frame(s) downloaded")
 
-    return frames, downloaded
+    return frames, downloaded, timestamps
 
 # ----------------------------------------------------------------------
-# WRITE STATUS (ALWAYS)
+# WRITE ENHANCED STATUS (ALWAYS)
 # ----------------------------------------------------------------------
-def write_status(c2_frames, c3_frames, tracks):
+def write_status(c2_frames, c3_frames, tracks, c2_times, c3_times):
+    total_analyzed = c2_frames + c3_frames
+
+    def time_range(times):
+        if not times:
+            return "none"
+        start = min(times)
+        end = max(times)
+        return f"{start.split('T')[1][:5]}–{end.split('T')[1][:5]} UTC"
+
+    c2_range = time_range(c2_times)
+    c3_range = time_range(c3_times)
+
     status = {
         "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "summary": f"Analyzed {c2_frames} C2 ({c2_range}) + {c3_frames} C3 ({c3_range}) = {total_analyzed} frames",
         "detectors": {
-            "C2": {"frames": c2_frames, "tracks": tracks},
-            "C3": {"frames": c3_frames, "tracks": tracks}
+            "C2": {
+                "frames": c2_frames,
+                "tracks": tracks,
+                "time_range": c2_range,
+                "timestamps": c2_times
+            },
+            "C3": {
+                "frames": c3_frames,
+                "tracks": tracks,
+                "time_range": c3_range,
+                "timestamps": c3_times
+            }
+        },
+        "total": {
+            "frames_analyzed": total_analyzed,
+            "tracks_found": tracks
         }
     }
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     status_path = OUT_DIR / "latest_status.json"
     with open(status_path, "w", encoding="utf-8") as f:
         json.dump(status, f, indent=2)
-    log(f"latest_status.json → {status_path}")
+    log(f"latest_status.json → {status_path} ({total_analyzed} analyzed)")
 
 # ----------------------------------------------------------------------
 # WRITE RUN PROOF (ALWAYS)
@@ -143,13 +173,15 @@ def main():
     log("=== DETECTION START ===")
     FRAMES_DIR.mkdir(exist_ok=True)
 
-    # 1. Download frames
-    frames, dl_counts = download_frames()
+    # 1. Download frames + timestamps
+    frames, dl_counts, timestamps = download_frames()
     c2_cnt = dl_counts["C2"]
     c3_cnt = dl_counts["C3"]
+    c2_times = timestamps["C2"]
+    c3_times = timestamps["C3"]
 
-    # 2. Run detection (REPLACE WITH YOUR AI CODE)
-    candidates = []  # ← Your AI output here
+    # 2. Run detection (PLACEHOLDER – replace with your AI)
+    candidates = []   # ← your AI output goes here
     tracks = 0
 
     # 3. Save candidates if any
@@ -161,17 +193,13 @@ def main():
         log(f"Saved {len(candidates)} candidates → {out_file.name}")
 
     # 4. Always write status & run proof
-    write_status(c2_cnt, c3_cnt, tracks)
+    write_status(c2_cnt, c3_cnt, tracks, c2_times, c3_times)
     write_latest_run(c2_cnt, c3_cnt, len(candidates))
 
-    # 5. Debug output
+    # 5. Debug summary
     log("=== SUMMARY ===")
     log(f"C2 frames: {c2_cnt}, C3 frames: {c3_cnt}")
     log(f"Candidates: {len(candidates)}, Tracks: {tracks}")
-    log("frames tree:")
-    run_cmd("find frames -type f | sort | sed 's/^/  - /'" if c2_cnt + c3_cnt else "echo '  - .gitkeep'")
-    log("detections tree:")
-    run_cmd("find detections -type f | head -20 | sort | sed 's/^/  - /'")
     log("=== END ===")
 
 if __name__ == "__main__":
