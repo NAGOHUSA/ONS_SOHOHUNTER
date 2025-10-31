@@ -28,13 +28,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install opencv-python-headless numpy requests pillow \
-                      filterpy scipy imageio imageio-ffmpeg \
-                      astropy beautifulsoup4
+                      filterpy scipy imageio imageio-ffmpeg
 
       - name: Run live detection
         env:
           DETECTOR_DEBUG: "1"
-          INSTRUMENTS: "lasco,goes"  # Add "stereo" later
+          INSTRUMENTS: "lasco,goes"
         run: |
           python detector/detect_comets.py --hours 6 --step-min 12 --out detections
           echo "frames tree:"; find frames -maxdepth 3 -type f | head -20
@@ -47,10 +46,9 @@ jobs:
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
             git commit -m "Auto: new multi-source detections [$(date -u)] [skip ci]"
-            echo "committed=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Push changes
-        if: steps.commit.outputs.committed == 'true'
+        if: success()
         run: |
           git push origin HEAD:main --force-with-lease
