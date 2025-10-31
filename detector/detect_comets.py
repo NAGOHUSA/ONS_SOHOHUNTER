@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Multi-source comet hunter: LASCO + GOES-19 (CCOR-1)
-Organized frames, robust tracking, AI classifier.
+Multi-source comet hunter: LASCO + GOES-19
+Robust Kalman tracker + AI classifier.
 """
 
 import argparse
@@ -42,7 +42,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
 
     paired = sorted(zip(frame_paths, ts_list), key=lambda x: x[1])
     candidates = []
-    active_kfs = []
+    active_kfs = []          # (kf, last_pos, age, track_id)
     next_id = 0
 
     for idx, (path, ts) in enumerate(paired):
@@ -50,13 +50,15 @@ def simple_track_detect(frame_paths, instr, ts_list):
         if img is None:
             continue
 
+        # Pre-process
         img_f = gaussian_filter(img.astype(float) / 255.0, sigma=1.0) * 255
         img_f = np.clip(img_f, 0, 255).astype(np.uint8)
 
+        # Threshold
         _, thresh = cv2.threshold(img_f, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # Predict
+        # ---- Predict ----
         for entry in active_kfs[:]:
             kf, last_pos, age, tid = entry
             kf.predict()
@@ -67,37 +69,39 @@ def simple_track_detect(frame_paths, instr, ts_list):
             i = active_kfs.index(entry)
             active_kfs[i] = (kf, pred, age + 1, tid)
 
-        # Measure
-        meas = []
-        for cnt in contours:
+        # ---- Measure ----
+        meas = []                     # (cx, cy, contour_index)
+        for c_idx, cnt in enumerate(contours):
             M = cv2.moments(cnt)
             if M["m00"] < 12:
                 continue
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
-            meas.append((cx, cy, cnt))
+            meas.append((cx, cy, c_idx))
 
-        # Associate
+        # ---- Associate ----
         used = set()
         for kf_idx, (kf, pred, age, tid) in enumerate(active_kfs):
             best_dist = float("inf")
             best_meas = None
-            for m_idx, (mx, my, cnt) in enumerate(meas):
+            for m_idx, (mx, my, c_idx) in enumerate(meas):
                 if m_idx in used:
                     continue
                 d = (mx - pred[0]) ** 2 + (my - pred[1]) ** 2
                 if d < best_dist:
                     best_dist = d
-                    best_meas = (mx, my)
+                    best_meas = (mx, my, c_idx)
             if best_meas and best_dist < 80 ** 2:
-                kf.update(np.array([[best_meas[0]], [best_meas[1]]]))
+                mx, my, c_idx = best_meas
+                kf.update(np.array([[mx], [my]]))
                 i = active_kfs.index((kf, pred, age, tid))
-                active_kfs[i] = (kf, best_meas, 0, tid)
-                used.add(meas.index((best_meas[0], best_meas[1], cnt)))
-                meas = [m for i, m in enumerate(meas) if i not in used]
+                active_kfs[i] = (kf, (mx, my), 0, tid)
+                used.add(meas.index((mx, my, c_idx)))
 
-        # New tracks
-        for mx, my, cnt in meas:
+        # ---- New tracks ----
+        for mx, my, c_idx in meas:
+            if meas.index((mx, my, c_idx)) in used:
+                continue
             kf = KalmanFilter(dim_x=4, dim_z=2)
             kf.x[:2, 0] = np.array([mx, my])
             kf.F = np.array([[1,0,1,0],[0,1,0,1],[0,0,1,0],[0,0,0,1]])
@@ -108,7 +112,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             active_kfs.append((kf, (mx, my), 0, next_id))
             next_id += 1
 
-        # Evaluate
+        # ---- Evaluate mature tracks ----
         for kf, pos, age, tid in active_kfs[:]:
             if age == 0 and len([p for p in paired[:idx+1] if p[1] <= ts]) >= 4:
                 h, w = img_f.shape
@@ -138,7 +142,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
 
     return candidates
 
-# Status & Run
+# ---- Status & Run ----
 def write_status(frames_dict, timestamps_dict):
     total = sum(len(frames_dict.get(i, [])) for i in INSTRS)
     status = {
@@ -148,7 +152,8 @@ def write_status(frames_dict, timestamps_dict):
         "per_source": {
             i: {
                 "frames": len(frames_dict.get(i, [])),
-                "time_range": f"{min(timestamps_dict[i]).split('T')[1][:5]}–{max(timestamps_dict[i]).split('T')[1][:5]} UTC" if timestamps_dict[i] else "none"
+                "time_range": f"{min(timestamps_dict[i]).split('T')[1][:5]}–{max(timestamps_dict[i]).split('T')[1][:5]} UTC"
+                if timestamps_dict[i] else "none"
             } for i in INSTRS
         }
     }
@@ -164,7 +169,7 @@ def write_latest_run(downloaded, candidates_count):
             "candidates_found": candidates_count
         }, f, indent=2)
 
-# Main
+# ---- CLI ----
 parser = argparse.ArgumentParser()
 parser.add_argument("--hours", type=int, default=int(os.getenv("HOURS", "6")))
 parser.add_argument("--step-min", type=int, default=int(os.getenv("STEP_MIN", "12")))
