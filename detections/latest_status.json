@@ -1,14 +1,14 @@
 {
-  "timestamp_utc": "2025-10-31T22:18:57Z",
+  "timestamp_utc": "2025-10-31T23:18:31Z",
   "instruments": [
     "lasco",
     "goes"
   ],
-  "summary": "Analyzed 25 frames",
+  "summary": "Analyzed 21 frames",
   "per_source": {
     "lasco": {
-      "frames": 25,
-      "time_range": "16:12\u201321:00 UTC"
+      "frames": 21,
+      "time_range": "17:12\u201321:12 UTC"
     },
     "goes": {
       "frames": 0,
