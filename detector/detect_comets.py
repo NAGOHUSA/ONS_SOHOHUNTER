@@ -2,8 +2,10 @@
 """
 detect_comets.py
 ----------------
-Download the most recent LASCO C2/C3 images, run the comet detector
-and always update detections/latest_status.json.
+Download latest LASCO C2/C3 images, run AI detection,
+and ALWAYS write:
+  - detections/latest_status.json
+  - detections/latest_run.json
 """
 
 import os
@@ -12,18 +14,17 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 import subprocess
-import sys
 
 # ----------------------------------------------------------------------
 # CONFIG
 # ----------------------------------------------------------------------
-HOURS = int(os.getenv("HOURS", "6"))          # look-back window
-STEP_MIN = int(os.getenv("STEP_MIN", "12"))   # image cadence
+HOURS = int(os.getenv("HOURS", "6"))
+STEP_MIN = int(os.getenv("STEP_MIN", "12"))
 OUT_DIR = Path(os.getenv("OUT", "detections"))
 FRAMES_DIR = Path("frames")
 DEBUG = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
-# **CORRECT** LASCO URL templates (no /1024/ folder)
+# CORRECT LASCO URLS (no /1024/ folder)
 C2_URL = (
     "https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/"
     "{year}/c2/{date}/{date}_{time}_c2_1024.jpg"
@@ -40,7 +41,6 @@ def log(*msg):
     print(" ".join(map(str, msg)))
 
 def run_cmd(cmd):
-    """Run a command from the repo root – only used for debugging."""
     if DEBUG:
         log("RUN:", cmd)
     result = subprocess.run(
@@ -85,7 +85,7 @@ def download_frames():
                 log(f"Fetching {instr} {date_str}_{time_str} …")
                 resp = requests.get(url, timeout=12)
                 if resp.status_code == 404:
-                    log("  404 – image not yet published")
+                    log("  404 – not yet published")
                     continue
                 if resp.status_code != 200:
                     log(f"  HTTP {resp.status_code}")
@@ -104,7 +104,7 @@ def download_frames():
     return frames, downloaded
 
 # ----------------------------------------------------------------------
-# UPDATE STATUS (ALWAYS)
+# WRITE STATUS (ALWAYS)
 # ----------------------------------------------------------------------
 def write_status(c2_frames, c3_frames, tracks):
     status = {
@@ -118,7 +118,23 @@ def write_status(c2_frames, c3_frames, tracks):
     status_path = OUT_DIR / "latest_status.json"
     with open(status_path, "w", encoding="utf-8") as f:
         json.dump(status, f, indent=2)
-    log(f"latest_status.json written → {status_path}")
+    log(f"latest_status.json → {status_path}")
+
+# ----------------------------------------------------------------------
+# WRITE RUN PROOF (ALWAYS)
+# ----------------------------------------------------------------------
+def write_latest_run(c2_frames, c3_frames, candidates_count):
+    run_info = {
+        "last_run_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "status": "completed",
+        "frames_downloaded": {"C2": c2_frames, "C3": c3_frames},
+        "candidates_found": candidates_count,
+        "note": "No new frames" if c2_frames + c3_frames == 0 else "OK"
+    }
+    run_path = OUT_DIR / "latest_run.json"
+    with open(run_path, "w", encoding="utf-8") as f:
+        json.dump(run_info, f, indent=2)
+    log(f"latest_run.json → {run_path}")
 
 # ----------------------------------------------------------------------
 # MAIN
@@ -132,25 +148,30 @@ def main():
     c2_cnt = dl_counts["C2"]
     c3_cnt = dl_counts["C3"]
 
-    # 2. Run detection (placeholder – replace with your AI code)
-    # -------------------------------------------------------
-    # For now we just count tracks = 0
+    # 2. Run detection (REPLACE WITH YOUR AI CODE)
+    candidates = []  # ← Your AI output here
     tracks = 0
-    # -------------------------------------------------------
 
-    # 3. Always write status (even when 0 frames)
+    # 3. Save candidates if any
+    if candidates:
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        out_file = OUT_DIR / f"candidates_{timestamp}.json"
+        with open(out_file, "w") as f:
+            json.dump(candidates, f, indent=2)
+        log(f"Saved {len(candidates)} candidates → {out_file.name}")
+
+    # 4. Always write status & run proof
     write_status(c2_cnt, c3_cnt, tracks)
+    write_latest_run(c2_cnt, c3_cnt, len(candidates))
 
-    # 4. Debug tree output (mirrors your workflow log)
+    # 5. Debug output
     log("=== SUMMARY ===")
     log(f"C2 frames: {c2_cnt}, C3 frames: {c3_cnt}")
-    log(f"Candidates/Tracks: candidates, {tracks} tracks")
-    log(f"JSON files: {len(list(OUT_DIR.glob('candidates_*.json')))}")
+    log(f"Candidates: {len(candidates)}, Tracks: {tracks}")
     log("frames tree:")
     run_cmd("find frames -type f | sort | sed 's/^/  - /'" if c2_cnt + c3_cnt else "echo '  - .gitkeep'")
     log("detections tree:")
     run_cmd("find detections -type f | head -20 | sort | sed 's/^/  - /'")
-
     log("=== END ===")
 
 if __name__ == "__main__":
