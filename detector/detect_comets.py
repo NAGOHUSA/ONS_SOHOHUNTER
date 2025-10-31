@@ -17,9 +17,13 @@ import cv2
 import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
-import subprocess
 import tempfile
-import shutil
+import sys
+
+# ----------------------------------------------------------------------
+# Add detector/ to Python path so ai_classifier can be imported
+# ----------------------------------------------------------------------
+sys.path.append(str(Path(__file__).parent))
 
 # ----------------------------------------------------------------------
 # CONFIG (CLI > env > defaults)
@@ -50,16 +54,6 @@ C3_URL = (
 # ----------------------------------------------------------------------
 def log(*msg):
     print(" ".join(map(str, msg)))
-
-def run_cmd(cmd):
-    if DEBUG:
-        log("RUN:", cmd)
-    result = subprocess.run(
-        cmd, shell=True, capture_output=True, text=True, cwd=Path.cwd()
-    )
-    if result.returncode != 0 and DEBUG:
-        log("CMD FAILED:", result.stderr)
-    return result.stdout
 
 # ----------------------------------------------------------------------
 # DOWNLOAD FRAMES + TIMESTAMPS
@@ -118,13 +112,14 @@ def download_frames():
     return frames, downloaded, timestamps
 
 # ----------------------------------------------------------------------
-# AI CLASSIFIER IMPORT
+# AI CLASSIFIER IMPORT (with safe fallback)
 # ----------------------------------------------------------------------
 try:
-    from detector.ai_classifier import classify_crop_batch
+    from ai_classifier import classify_crop_batch
+    log("AI classifier import successful")
 except Exception as e:
     log("AI classifier import failed – falling back to dummy:", e)
-    def classify_crop_batch(paths):  # dummy
+    def classify_crop_batch(paths):
         return [{"label": "not_comet", "score": 0.0} for _ in paths]
 
 # ----------------------------------------------------------------------
@@ -134,13 +129,6 @@ from scipy.ndimage import gaussian_filter
 from filterpy.kalman import KalmanFilter
 
 def simple_track_detect(frame_paths, instr, ts_list):
-    """
-    Very lightweight tracker:
-    - Otsu threshold → contours
-    - Kalman filter per candidate (nearest-association)
-    - Crop 64×64 → AI classifier
-    Returns list of candidate dicts.
-    """
     if len(frame_paths) < 4:
         return []
 
@@ -148,8 +136,8 @@ def simple_track_detect(frame_paths, instr, ts_list):
     paired = sorted(zip(frame_paths, ts_list), key=lambda x: x[1])
     candidates = []
 
-    # Kalman per potential track (we keep a list of active KFs)
-    active_kfs = []          # each: (kf, last_pos, age, track_id)
+    # Active tracks: (kf, last_pos, age, track_id)
+    active_kfs = []
     next_id = 0
 
     for idx, (path, ts) in enumerate(paired):
@@ -157,7 +145,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
         if img is None:
             continue
 
-        # Light preprocessing
+        # Preprocess
         img_f = gaussian_filter(img.astype(float) / 255.0, sigma=1.0) * 255
         img_f = np.clip(img_f, 0, 255).astype(np.uint8)
 
@@ -165,35 +153,33 @@ def simple_track_detect(frame_paths, instr, ts_list):
         _, thresh = cv2.threshold(img_f, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # ---- Predict all active tracks ----
-        for kf_entry in active_kfs[:]:
-            kf, last_pos, age, tid = kf_entry
+        # Predict all active tracks
+        for entry in active_kfs[:]:
+            kf, last_pos, age, tid = entry
             kf.predict()
-            pred = kf.x[:2].flatten().astype(int)
-            # age out if no measurement for >3 frames
+            pred = kf.x[:2, 0].astype(int)
             if age > 3:
-                active_kfs.remove(kf_entry)
+                active_kfs.remove(entry)
                 continue
-            kf_entry = (kf, pred, age + 1, tid)
-            idx_kf = active_kfs.index(kf_entry)
-            active_kfs[idx_kf] = kf_entry
+            # update age
+            i = active_kfs.index(entry)
+            active_kfs[i] = (kf, pred, age + 1, tid)
 
-        # ---- Associate detections to tracks (nearest) ----
+        # Extract measurements
         meas = []
         for cnt in contours:
             M = cv2.moments(cnt)
-            if M["m00"] < 12:        # too tiny
+            if M["m00"] < 12:
                 continue
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
             meas.append((cx, cy, cnt))
 
-        # simple nearest-neighbor
+        # Nearest-neighbor association
         used = set()
         for kf_idx, (kf, pred, age, tid) in enumerate(active_kfs):
             best_dist = float("inf")
             best_meas = None
-            best_cnt = None
             for m_idx, (mx, my, cnt) in enumerate(meas):
                 if m_idx in used:
                     continue
@@ -201,18 +187,17 @@ def simple_track_detect(frame_paths, instr, ts_list):
                 if d < best_dist:
                     best_dist = d
                     best_meas = (mx, my)
-                    best_cnt = cnt
-            if best_meas and best_dist < 80 ** 2:   # max 80 px jump
-                # update
-                kf.update(np.array([[best_meas[0]], [best_meas[1]]]))  # proper (2,1)
-                active_kfs[kf_idx] = (kf, best_meas, 0, tid)
-                used.add(meas.index((best_meas[0], best_meas[1], best_cnt)))
-                meas.pop(meas.index((best_meas[0], best_meas[1], best_cnt)))
+            if best_meas and best_dist < 80 ** 2:
+                kf.update(np.array([[best_meas[0]], [best_meas[1]]]))
+                i = active_kfs.index((kf, pred, age, tid))
+                active_kfs[i] = (kf, best_meas, 0, tid)
+                used.add(meas.index((best_meas[0], best_meas[1], cnt)))
+                meas = [m for i, m in enumerate(meas) if i not in used]
 
-        # ---- Start new tracks for leftover detections ----
+        # Start new tracks for leftovers
         for mx, my, cnt in meas:
             kf = KalmanFilter(dim_x=4, dim_z=2)
-            kf.x[:2, 0] = np.array([mx, my])  # column vector
+            kf.x[:2, 0] = np.array([mx, my])
             kf.F = np.array([[1, 0, 1, 0],
                              [0, 1, 0, 1],
                              [0, 0, 1, 0],
@@ -225,32 +210,30 @@ def simple_track_detect(frame_paths, instr, ts_list):
             active_kfs.append((kf, (mx, my), 0, next_id))
             next_id += 1
 
-        # ---- After a few frames, evaluate mature tracks ----
+        # Evaluate mature tracks (after 4+ frames)
         for kf, pos, age, tid in active_kfs[:]:
-            if age == 0 and len([p for p in paired[: idx + 1] if p[1] <= ts]) >= 4:
-                # extract crop around current pos
+            if age == 0 and len([p for p in paired[:idx+1] if p[1] <= ts]) >= 4:
                 h, w = img_f.shape
                 x, y = pos
-                crop = img_f[max(0, y - 32):min(h, y + 32), max(0, x - 32):min(w, x + 32)]
+                crop = img_f[max(0, y-32):min(h, y+32), max(0, x-32):min(w, x+32)]
                 if crop.size == 0:
                     continue
                 tmp_path = Path(tempfile.mktemp(suffix=".png"))
                 cv2.imwrite(str(tmp_path), crop)
-
                 cls = classify_crop_batch([str(tmp_path)])[0]
                 os.unlink(tmp_path)
 
-                if cls["score"] >= 0.6:      # comet confidence
+                if cls["score"] >= 0.6:
                     candidates.append({
                         "instrument": instr,
                         "timestamp": ts,
                         "track_id": tid,
-                        "bbox": [x - 32, y - 32, 64, 64],
+                        "bbox": [x-32, y-32, 64, 64],
                         "crop_path": f"crops/{instr}_track{tid}_{ts.replace(':', '')}.png",
                         "ai_label": cls["label"],
                         "ai_score": round(cls["score"], 3)
                     })
-                    # save crop for later inspection
+                    # Save final crop
                     crop_dir = OUT_DIR / "crops"
                     crop_dir.mkdir(parents=True, exist_ok=True)
                     final_crop = crop_dir / Path(candidates[-1]["crop_path"]).name
@@ -260,18 +243,14 @@ def simple_track_detect(frame_paths, instr, ts_list):
     return candidates
 
 # ----------------------------------------------------------------------
-# WRITE ENHANCED STATUS (ALWAYS)
+# WRITE STATUS & RUN PROOF
 # ----------------------------------------------------------------------
 def write_status(c2_frames, c3_frames, tracks, c2_times, c3_times):
     total_analyzed = c2_frames + c3_frames
-
     def time_range(times):
         if not times:
             return "none"
-        start = min(times)
-        end = max(times)
-        return f"{start.split('T')[1][:5]}–{end.split('T')[1][:5]} UTC"
-
+        return f"{min(times).split('T')[1][:5]}–{max(times).split('T')[1][:5]} UTC"
     c2_range = time_range(c2_times)
     c3_range = time_range(c3_times)
 
@@ -279,34 +258,17 @@ def write_status(c2_frames, c3_frames, tracks, c2_times, c3_times):
         "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "summary": f"Analyzed {c2_frames} C2 ({c2_range}) + {c3_frames} C3 ({c3_range}) = {total_analyzed} frames",
         "detectors": {
-            "C2": {
-                "frames": c2_frames,
-                "tracks": tracks,
-                "time_range": c2_range,
-                "timestamps": c2_times
-            },
-            "C3": {
-                "frames": c3_frames,
-                "tracks": tracks,
-                "time_range": c3_range,
-                "timestamps": c3_times
-            }
+            "C2": {"frames": c2_frames, "tracks": tracks, "time_range": c2_range, "timestamps": c2_times},
+            "C3": {"frames": c3_frames, "tracks": tracks, "time_range": c3_range, "timestamps": c3_times}
         },
-        "total": {
-            "frames_analyzed": total_analyzed,
-            "tracks_found": tracks
-        }
+        "total": {"frames_analyzed": total_analyzed, "tracks_found": tracks}
     }
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    status_path = OUT_DIR / "latest_status.json"
-    with open(status_path, "w", encoding="utf-8") as f:
+    with open(OUT_DIR / "latest_status.json", "w", encoding="utf-8") as f:
         json.dump(status, f, indent=2)
-    log(f"latest_status.json → {status_path} ({total_analyzed} analyzed)")
+    log(f"latest_status.json → {OUT_DIR / 'latest_status.json'}")
 
-# ----------------------------------------------------------------------
-# WRITE RUN PROOF (ALWAYS)
-# ----------------------------------------------------------------------
 def write_latest_run(c2_frames, c3_frames, candidates_count):
     run_info = {
         "last_run_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
@@ -315,10 +277,9 @@ def write_latest_run(c2_frames, c3_frames, candidates_count):
         "candidates_found": candidates_count,
         "note": "No new frames" if c2_frames + c3_frames == 0 else "OK"
     }
-    run_path = OUT_DIR / "latest_run.json"
-    with open(run_path, "w", encoding="utf-8") as f:
+    with open(OUT_DIR / "latest_run.json", "w", encoding="utf-8") as f:
         json.dump(run_info, f, indent=2)
-    log(f"latest_run.json → {run_path}")
+    log(f"latest_run.json → {OUT_DIR / 'latest_run.json'}")
 
 # ----------------------------------------------------------------------
 # MAIN
@@ -327,20 +288,17 @@ def main():
     log("=== DETECTION START ===")
     FRAMES_DIR.mkdir(exist_ok=True)
 
-    # 1. Download frames + timestamps
     frames, dl_counts, timestamps = download_frames()
     c2_cnt = dl_counts["C2"]
     c3_cnt = dl_counts["C3"]
     c2_times = timestamps["C2"]
     c3_times = timestamps["C3"]
 
-    # 2. Run detection
     c2_cands = simple_track_detect(frames["C2"], "C2", c2_times)
     c3_cands = simple_track_detect(frames["C3"], "C3", c3_times)
     all_cands = c2_cands + c3_cands
-    tracks = len({c["track_id"] for c in all_cands})   # unique tracks
+    tracks = len({c["track_id"] for c in all_cands})
 
-    # 3. Save candidates if any
     if all_cands:
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         out_file = OUT_DIR / f"candidates_{timestamp}.json"
@@ -348,11 +306,9 @@ def main():
             json.dump(all_cands, f, indent=2)
         log(f"Saved {len(all_cands)} candidates → {out_file.name}")
 
-    # 4. Always write status & run proof
     write_status(c2_cnt, c3_cnt, tracks, c2_times, c3_times)
     write_latest_run(c2_cnt, c3_cnt, len(all_cands))
 
-    # 5. Debug summary
     log("=== SUMMARY ===")
     log(f"C2 frames: {c2_cnt}, C3 frames: {c3_cnt}")
     log(f"Candidates: {len(all_cands)}, Unique tracks: {tracks}")
