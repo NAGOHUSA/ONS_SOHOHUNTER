@@ -1,0 +1,20 @@
+[
+  {
+    "instrument": "C2",
+    "timestamp": "2025-10-30T17:00:00Z",
+    "bbox": [500, 240, 628, 368],
+    "crop_path": "frames/C2_20251030_1700.jpg",
+    "ai_label": "comet",
+    "ai_score": 0.91,
+    "track_id": "T002"
+  },
+  {
+    "instrument": "C3",
+    "timestamp": "2025-10-30T17:12:00Z",
+    "bbox": [1016, 504, 1272, 760],
+    "crop_path": "frames/C3_20251030_1712.jpg",
+    "ai_label": "comet",
+    "ai_score": 0.89,
+    "track_id": "T002"
+  }
+]
