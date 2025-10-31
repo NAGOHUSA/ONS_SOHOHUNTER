@@ -41,20 +41,9 @@ jobs:
           #!/usr/bin/env python3
           import json, os, cv2, numpy as np
           from pathlib import Path
+          from detector.ai_classifier import classify_crop_batch
 
           D = Path("detections")
-          USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"
-
-          def classify(crop):
-              if not USE_AI or crop.size == 0:
-                  return {"label": "not_comet", "score": 0.0}
-              h, w = crop.shape
-              center = crop[h//4:3*h//4, w//4:3*w//4]
-              if center.size == 0:
-                  return {"label": "not_comet", "score": 0.0}
-              score = min(0.99, (np.mean(center)/255)*0.6 + (np.std(center)/50)*0.4)
-              return {"label": "comet" if score > 0.6 else "not_comet", "score": round(score, 3)}
-
           for p in sorted(D.glob("candidates_*.json"), reverse=True):
               try:
                   with open(p) as f:
@@ -62,21 +51,25 @@ jobs:
               except:
                   continue
               modified = False
-              for cand in data:
+              crop_paths = []
+              idx_map = {}
+              for i, cand in enumerate(data):
                   if cand.get("ai_label"):
                       continue
                   cp = Path(cand.get("crop_path", ""))
                   if not cp.is_absolute():
                       cp = D / cp
-                  if not cp.exists():
-                      continue
-                  crop = cv2.imread(str(cp), cv2.IMREAD_GRAYSCALE)
-                  if crop is None:
-                      continue
-                  ai = classify(crop)
-                  cand["ai_label"] = ai["label"]
-                  cand["ai_score"] = ai["score"]
-                  modified = True
+                  if cp.exists():
+                      crop_paths.append(str(cp))
+                      idx_map[len(crop_paths)-1] = i
+              if crop_paths:
+                  results = classify_crop_batch(crop_paths)
+                  for res_idx, res in results.items():
+                      if res_idx in idx_map:
+                          i = idx_map[res_idx]
+                          data[i]["ai_label"] = res["label"]
+                          data[i]["ai_score"] = round(res["score"], 3)
+                          modified = True
               if modified:
                   backup = p.with_suffix(".json.bak")
                   p.rename(backup)
@@ -93,7 +86,7 @@ jobs:
           USE_AI_CLASSIFIER: "1"
           DETECTOR_DEBUG: "1"
         run: |
-          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
+          python detect_comets.py --hours 6 --step-min 12 --out detections
           echo "frames tree:"; find frames -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
           echo "detections tree:"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
