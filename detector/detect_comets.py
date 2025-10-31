@@ -1,101 +1,157 @@
 #!/usr/bin/env python3
 """
-purge_old_data.py
------------------
-Delete every file under detections/ that is older than 24 hours.
-Directories are never removed.
+detect_comets.py
+----------------
+Download the most recent LASCO C2/C3 images, run the comet detector
+and always update detections/latest_status.json.
 """
 
-import subprocess
+import os
+import json
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
+import subprocess
+import sys
 
 # ----------------------------------------------------------------------
-# CONFIGURATION
+# CONFIG
 # ----------------------------------------------------------------------
-DETECTIONS_ROOT = Path("detections")
-KEEP_HOURS = 24                # <-- change to any number of hours you need
-DRY_RUN = False                # Set True to see what would be deleted
-COMMIT_CHANGES = True          # False → only delete, no git commit
+HOURS = int(os.getenv("HOURS", "6"))          # look-back window
+STEP_MIN = int(os.getenv("STEP_MIN", "12"))   # image cadence
+OUT_DIR = Path(os.getenv("OUT", "detections"))
+FRAMES_DIR = Path("frames")
+DEBUG = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
+# **CORRECT** LASCO URL templates (no /1024/ folder)
+C2_URL = (
+    "https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/"
+    "{year}/c2/{date}/{date}_{time}_c2_1024.jpg"
+)
+C3_URL = (
+    "https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/"
+    "{year}/c3/{date}/{date}_{time}_c3_1024.jpg"
+)
 
 # ----------------------------------------------------------------------
 # HELPERS
 # ----------------------------------------------------------------------
-def run_cmd(cmd: str, check: bool = True):
-    """Run a shell command in the repo root."""
+def log(*msg):
+    print(" ".join(map(str, msg)))
+
+def run_cmd(cmd):
+    """Run a command from the repo root – only used for debugging."""
+    if DEBUG:
+        log("RUN:", cmd)
     result = subprocess.run(
         cmd, shell=True, capture_output=True, text=True,
-        cwd=DETECTIONS_ROOT.parent
+        cwd=Path.cwd()
     )
-    if check and result.returncode != 0:
-        raise RuntimeError(f"Command failed: {cmd}\n{result.stderr}")
-    return result
+    if result.returncode != 0 and DEBUG:
+        log("CMD FAILED:", result.stderr)
+    return result.stdout
 
+# ----------------------------------------------------------------------
+# DOWNLOAD FRAMES
+# ----------------------------------------------------------------------
+def download_frames():
+    now = datetime.utcnow()
+    start = now - timedelta(hours=HOURS)
+    frames = {"C2": [], "C3": []}
+    downloaded = {"C2": 0, "C3": 0}
 
-def is_file_old(path: Path, cutoff: datetime) -> bool:
-    """Return True if the file’s mtime is older than `cutoff`."""
-    try:
-        mtime = datetime.fromtimestamp(path.stat().st_mtime)
-        return mtime < cutoff
-    except OSError:
-        return False
+    for instr in ("C2", "C3"):
+        url_tmpl = C2_URL if instr == "C2" else C3_URL
+        t = start.replace(minute=0, second=0, microsecond=0)
 
+        while t < now:
+            t += timedelta(minutes=STEP_MIN)
+            if t > now:
+                break
+
+            date_str = t.strftime("%Y%m%d")
+            time_str = t.strftime("%H%M")
+            year = t.year
+
+            url = url_tmpl.format(year=year, date=date_str, time=time_str)
+            path = FRAMES_DIR / f"{instr}_{date_str}_{time_str}.jpg"
+
+            if path.exists():
+                frames[instr].append(str(path))
+                downloaded[instr] += 1
+                continue
+
+            try:
+                log(f"Fetching {instr} {date_str}_{time_str} …")
+                resp = requests.get(url, timeout=12)
+                if resp.status_code == 404:
+                    log("  404 – image not yet published")
+                    continue
+                if resp.status_code != 200:
+                    log(f"  HTTP {resp.status_code}")
+                    continue
+
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(resp.content)
+                log(f"  Saved {path.name}")
+                frames[instr].append(str(path))
+                downloaded[instr] += 1
+            except Exception as e:
+                log(f"  Download error: {e}")
+
+        log(f"{instr}: {downloaded[instr]} frame(s) downloaded")
+
+    return frames, downloaded
+
+# ----------------------------------------------------------------------
+# UPDATE STATUS (ALWAYS)
+# ----------------------------------------------------------------------
+def write_status(c2_frames, c3_frames, tracks):
+    status = {
+        "timestamp_utc": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "detectors": {
+            "C2": {"frames": c2_frames, "tracks": tracks},
+            "C3": {"frames": c3_frames, "tracks": tracks}
+        }
+    }
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    status_path = OUT_DIR / "latest_status.json"
+    with open(status_path, "w", encoding="utf-8") as f:
+        json.dump(status, f, indent=2)
+    log(f"latest_status.json written → {status_path}")
 
 # ----------------------------------------------------------------------
 # MAIN
 # ----------------------------------------------------------------------
 def main():
-    if not DETECTIONS_ROOT.exists():
-        print(f"'{DETECTIONS_ROOT}' not found – nothing to purge.")
-        return
+    log("=== DETECTION START ===")
+    FRAMES_DIR.mkdir(exist_ok=True)
 
-    cutoff = datetime.now() - timedelta(hours=KEEP_HOURS)
-    print(f"Purging files under '{DETECTIONS_ROOT}' older than {cutoff:%Y-%m-%d %H:%M} "
-          f"(keep last {KEEP_HOURS} h)")
+    # 1. Download frames
+    frames, dl_counts = download_frames()
+    c2_cnt = dl_counts["C2"]
+    c3_cnt = dl_counts["C3"]
 
-    files_to_delete = []
-    for file_path in DETECTIONS_ROOT.rglob("*"):
-        if file_path.is_file() and is_file_old(file_path, cutoff):
-            files_to_delete.append(file_path)
+    # 2. Run detection (placeholder – replace with your AI code)
+    # -------------------------------------------------------
+    # For now we just count tracks = 0
+    tracks = 0
+    # -------------------------------------------------------
 
-    if not files_to_delete:
-        print("No old files found – everything is newer than the cutoff.")
-        return
+    # 3. Always write status (even when 0 frames)
+    write_status(c2_cnt, c3_cnt, tracks)
 
-    print(f"\nFound {len(files_to_delete)} file(s) to delete:")
-    for p in sorted(files_to_delete):
-        mtime = datetime.fromtimestamp(p.stat().st_mtime)
-        print(f"  - {p.relative_to(DETECTIONS_ROOT)} (mtime: {mtime:%Y-%m-%d %H:%M})")
+    # 4. Debug tree output (mirrors your workflow log)
+    log("=== SUMMARY ===")
+    log(f"C2 frames: {c2_cnt}, C3 frames: {c3_cnt}")
+    log(f"Candidates/Tracks: candidates, {tracks} tracks")
+    log(f"JSON files: {len(list(OUT_DIR.glob('candidates_*.json')))}")
+    log("frames tree:")
+    run_cmd("find frames -type f | sort | sed 's/^/  - /'" if c2_cnt + c3_cnt else "echo '  - .gitkeep'")
+    log("detections tree:")
+    run_cmd("find detections -type f | head -20 | sort | sed 's/^/  - /'")
 
-    if DRY_RUN:
-        print("\n[DRY RUN] – no files deleted, no commit.")
-        return
-
-    # ---- DELETE ----
-    print("\nDeleting files...")
-    deleted = 0
-    for p in files_to_delete:
-        try:
-            p.unlink()
-            print(f"  Deleted: {p.name}")
-            deleted += 1
-        except OSError as e:
-            print(f"  Failed to delete {p.name}: {e}")
-
-    # ---- GIT COMMIT (optional) ----
-    if COMMIT_CHANGES:
-        print("\nCommitting changes to git...")
-        try:
-            run_cmd("git add detections")
-            msg = f"purge: remove files older than {KEEP_HOURS}h [{datetime.now().isoformat()}]"
-            run_cmd(f'git commit -m "{msg}"')
-            print("  Commit successful.")
-        except Exception as e:
-            print(f"  Git commit failed: {e}")
-
-    print(f"\nPurge complete! {deleted} file(s) removed.")
-
+    log("=== END ===")
 
 if __name__ == "__main__":
     main()
