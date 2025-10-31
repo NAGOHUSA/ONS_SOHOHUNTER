@@ -1,0 +1,22 @@
+[
+  {
+    "instrument": "C2",
+    "timestamp": "2025-10-30T18:00:00Z",
+    "bbox": [512, 256, 640, 384],
+    "crop_path": "frames/C2_20251030_1800.jpg",
+    "ai_label": "comet",
+    "ai_score": 0.94,
+    "track_id": "T001",
+    "note": "High confidence, tracked across 2 frames"
+  },
+  {
+    "instrument": "C3",
+    "timestamp": "2025-10-30T18:06:00Z",
+    "bbox": [1024, 512, 1280, 768],
+    "crop_path": "frames/C3_20251030_1806.jpg",
+    "ai_label": "comet",
+    "ai_score": 0.88,
+    "track_id": "T003",
+    "note": "New track, possible Kreutz sungrazer"
+  }
+]
