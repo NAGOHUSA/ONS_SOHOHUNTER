@@ -1,60 +1,41 @@
 #!/usr/bin/env python3
 """
-detect_comets.py
-----------------
-Multi-source comet hunter: LASCO, GOES, STEREO, Solar Orbiter.
-Organized frames by source + sub-instrument.
-Uses ai_classifier and Kalman tracker.
+Multi-source comet hunter: LASCO + GOES-19 (CCOR-1)
+Organized frames, robust tracking, AI classifier.
 """
 
 import argparse
 import os
 import json
-import requests
 import cv2
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 import tempfile
 import sys
-from astropy.io import fits
-from scipy.ndimage import gaussian_filter
-from filterpy.kalman import KalmanFilter
 
 # Add detector/ to path
 sys.path.append(str(Path(__file__).parent))
 
-# Import source modules
+# Import sources
 from sources.lasco import fetch_lasco_frames
 from sources.goes import fetch_goes_frames
 from sources.stereo import fetch_stereo_frames
 from sources.solar_orbiter import fetch_solar_orbiter_frames
 
-# CONFIG
-parser = argparse.ArgumentParser()
-parser.add_argument("--hours", type=int, default=int(os.getenv("HOURS", "6")))
-parser.add_argument("--step-min", type=int, default=int(os.getenv("STEP_MIN", "12")))
-parser.add_argument("--out", default=os.getenv("OUT", "detections"))
-parser.add_argument("--instruments", default=os.getenv("INSTRUMENTS", "lasco"), help="Comma-sep: lasco,goes,stereo,solar_orbiter")
-args = parser.parse_args()
-
-HOURS = args.hours
-STEP_MIN = args.step_min
-OUT_DIR = Path(args.out)
-FRAMES_DIR = Path("frames")
-DEBUG = os.getenv("DETECTOR_DEBUG", "0") == "1"
-INSTRS = [i.strip().lower() for i in args.instruments.split(",")]
-
-# AI CLASSIFIER
+# AI Classifier
 try:
     from ai_classifier import classify_crop_batch
-    print("AI classifier import successful")
+    print("AI classifier loaded")
 except Exception as e:
-    print("AI classifier import failed – using dummy:", e)
+    print("AI fallback:", e)
     def classify_crop_batch(paths):
         return [{"label": "not_comet", "score": 0.0} for _ in paths]
 
-# TRACKER
+# Tracker
+from scipy.ndimage import gaussian_filter
+from filterpy.kalman import KalmanFilter
+
 def simple_track_detect(frame_paths, instr, ts_list):
     if len(frame_paths) < 4:
         return []
@@ -75,6 +56,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
         _, thresh = cv2.threshold(img_f, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        # Predict
         for entry in active_kfs[:]:
             kf, last_pos, age, tid = entry
             kf.predict()
@@ -85,6 +67,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             i = active_kfs.index(entry)
             active_kfs[i] = (kf, pred, age + 1, tid)
 
+        # Measure
         meas = []
         for cnt in contours:
             M = cv2.moments(cnt)
@@ -94,6 +77,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             cy = int(M["m01"] / M["m00"])
             meas.append((cx, cy, cnt))
 
+        # Associate
         used = set()
         for kf_idx, (kf, pred, age, tid) in enumerate(active_kfs):
             best_dist = float("inf")
@@ -112,6 +96,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
                 used.add(meas.index((best_meas[0], best_meas[1], cnt)))
                 meas = [m for i, m in enumerate(meas) if i not in used]
 
+        # New tracks
         for mx, my, cnt in meas:
             kf = KalmanFilter(dim_x=4, dim_z=2)
             kf.x[:2, 0] = np.array([mx, my])
@@ -123,6 +108,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             active_kfs.append((kf, (mx, my), 0, next_id))
             next_id += 1
 
+        # Evaluate
         for kf, pos, age, tid in active_kfs[:]:
             if age == 0 and len([p for p in paired[:idx+1] if p[1] <= ts]) >= 4:
                 h, w = img_f.shape
@@ -152,7 +138,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
 
     return candidates
 
-# STATUS & RUN
+# Status & Run
 def write_status(frames_dict, timestamps_dict):
     total = sum(len(frames_dict.get(i, [])) for i in INSTRS)
     status = {
@@ -164,8 +150,7 @@ def write_status(frames_dict, timestamps_dict):
                 "frames": len(frames_dict.get(i, [])),
                 "time_range": f"{min(timestamps_dict[i]).split('T')[1][:5]}–{max(timestamps_dict[i]).split('T')[1][:5]} UTC" if timestamps_dict[i] else "none"
             } for i in INSTRS
-        },
-        "total": {"frames_analyzed": total}
+        }
     }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUT_DIR / "latest_status.json", "w") as f:
@@ -179,10 +164,21 @@ def write_latest_run(downloaded, candidates_count):
             "candidates_found": candidates_count
         }, f, indent=2)
 
+# Main
+parser = argparse.ArgumentParser()
+parser.add_argument("--hours", type=int, default=int(os.getenv("HOURS", "6")))
+parser.add_argument("--step-min", type=int, default=int(os.getenv("STEP_MIN", "12")))
+parser.add_argument("--out", default=os.getenv("OUT", "detections"))
+parser.add_argument("--instruments", default=os.getenv("INSTRUMENTS", "lasco"))
+args = parser.parse_args()
+
+HOURS = args.hours
+STEP_MIN = args.step_min
+OUT_DIR = Path(args.out)
+INSTRS = [i.strip().lower() for i in args.instruments.split(",")]
+
 def main():
     print("=== DETECTION START ===")
-    FRAMES_DIR.mkdir(exist_ok=True)
-
     frames = {}
     timestamps = {}
     downloaded = {}
@@ -193,10 +189,6 @@ def main():
             f, t, d = fetch_lasco_frames(HOURS, STEP_MIN)
         elif instr == "goes":
             f, t, d = fetch_goes_frames(HOURS, STEP_MIN)
-        elif instr == "stereo":
-            f, t, d = fetch_stereo_frames(HOURS, STEP_MIN)
-        elif instr == "solar_orbiter":
-            f, t, d = fetch_solar_orbiter_frames(HOURS, STEP_MIN)
         else:
             continue
         frames[instr] = f
@@ -209,8 +201,6 @@ def main():
             cands = simple_track_detect(frames[instr], instr, timestamps[instr])
             all_cands.extend(cands)
 
-    tracks = len({c["track_id"] for c in all_cands})
-
     if all_cands:
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         with open(OUT_DIR / f"candidates_{ts}.json", "w") as f:
@@ -222,7 +212,7 @@ def main():
     print("=== SUMMARY ===")
     for i in INSTRS:
         print(f"{i}: {downloaded.get(i, 0)} frames")
-    print(f"Candidates: {len(all_cands)}, Tracks: {tracks}")
+    print(f"Candidates: {len(all_cands)}")
     print("=== END ===")
 
 if __name__ == "__main__":
