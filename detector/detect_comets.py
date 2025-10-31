@@ -204,7 +204,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
                     best_cnt = cnt
             if best_meas and best_dist < 80 ** 2:   # max 80 px jump
                 # update
-                kf.update(np.array(best_meas).reshape(2, 1))
+                kf.update(np.array([[best_meas[0]], [best_meas[1]]]))  # proper (2,1)
                 active_kfs[kf_idx] = (kf, best_meas, 0, tid)
                 used.add(meas.index((best_meas[0], best_meas[1], best_cnt)))
                 meas.pop(meas.index((best_meas[0], best_meas[1], best_cnt)))
@@ -212,7 +212,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
         # ---- Start new tracks for leftover detections ----
         for mx, my, cnt in meas:
             kf = KalmanFilter(dim_x=4, dim_z=2)
-            kf.x[:2] = np.array([mx, my])
+            kf.x[:2, 0] = np.array([mx, my])  # column vector
             kf.F = np.array([[1, 0, 1, 0],
                              [0, 1, 0, 1],
                              [0, 0, 1, 0],
