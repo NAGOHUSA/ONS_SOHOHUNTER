@@ -1,8 +1,8 @@
 {
-  "timestamp_utc": "2025-10-31T00:57:47Z",
+  "timestamp_utc": "2025-10-31T01:20:01Z",
   "detectors": {
     "C2": {
-      "frames": 20,
+      "frames": 15,
       "tracks": 0
     },
     "C3": {
