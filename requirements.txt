@@ -6,5 +6,3 @@ filterpy
 scipy
 imageio
 imageio-ffmpeg
-astropy
-beautifulsoup4
