@@ -1,36 +1,18 @@
 {
-  "timestamp_utc": "2025-10-31T17:19:15Z",
-  "summary": "Analyzed 13 C2 (11:12\u201315:12 UTC) + 0 C3 (none) = 13 frames",
-  "detectors": {
-    "C2": {
-      "frames": 13,
-      "tracks": 0,
-      "time_range": "11:12\u201315:12 UTC",
-      "timestamps": [
-        "2025-10-31T11:12:00Z",
-        "2025-10-31T11:24:00Z",
-        "2025-10-31T11:36:00Z",
-        "2025-10-31T11:48:00Z",
-        "2025-10-31T12:00:00Z",
-        "2025-10-31T12:12:00Z",
-        "2025-10-31T12:24:00Z",
-        "2025-10-31T12:36:00Z",
-        "2025-10-31T12:48:00Z",
-        "2025-10-31T14:36:00Z",
-        "2025-10-31T14:48:00Z",
-        "2025-10-31T15:00:00Z",
-        "2025-10-31T15:12:00Z"
-      ]
+  "timestamp_utc": "2025-10-31T21:08:32Z",
+  "instruments": [
+    "lasco",
+    "goes"
+  ],
+  "summary": "Analyzed 7 frames",
+  "per_source": {
+    "lasco": {
+      "frames": 7,
+      "time_range": "15:12\u201320:12 UTC"
     },
-    "C3": {
+    "goes": {
       "frames": 0,
-      "tracks": 0,
-      "time_range": "none",
-      "timestamps": []
+      "time_range": "none"
     }
-  },
-  "total": {
-    "frames_analyzed": 13,
-    "tracks_found": 0
   }
 }

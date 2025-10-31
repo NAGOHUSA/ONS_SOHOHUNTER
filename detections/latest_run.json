@@ -1,10 +1,8 @@
 {
-  "last_run_utc": "2025-10-31T17:19:15Z",
-  "status": "completed",
+  "last_run_utc": "2025-10-31T21:08:32Z",
   "frames_downloaded": {
-    "C2": 13,
-    "C3": 0
+    "lasco": 7,
+    "goes": 0
   },
-  "candidates_found": 0,
-  "note": "OK"
+  "candidates_found": 48
 }
