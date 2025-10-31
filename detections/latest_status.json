@@ -1,15 +1,14 @@
 {
-  "timestamp_utc": "2025-10-31T14:20:34Z",
-  "summary": "Analyzed 3 C2 (08:12\u201308:48 UTC) + 0 C3 (none) = 3 frames",
+  "timestamp_utc": "2025-10-31T15:19:32Z",
+  "summary": "Analyzed 2 C2 (14:36\u201314:48 UTC) + 0 C3 (none) = 2 frames",
   "detectors": {
     "C2": {
-      "frames": 3,
+      "frames": 2,
       "tracks": 0,
-      "time_range": "08:12\u201308:48 UTC",
+      "time_range": "14:36\u201314:48 UTC",
       "timestamps": [
-        "2025-10-31T08:12:00Z",
-        "2025-10-31T08:24:00Z",
-        "2025-10-31T08:48:00Z"
+        "2025-10-31T14:36:00Z",
+        "2025-10-31T14:48:00Z"
       ]
     },
     "C3": {
@@ -20,7 +19,7 @@
     }
   },
   "total": {
-    "frames_analyzed": 3,
+    "frames_analyzed": 2,
     "tracks_found": 0
   }
 }
