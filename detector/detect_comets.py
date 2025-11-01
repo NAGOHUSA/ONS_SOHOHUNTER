@@ -206,7 +206,7 @@ def main():
             cands = simple_track_detect(frames[instr], instr, timestamps[instr])
             all_cands.extend(cands)
 
-    # ALWAYS WRITE candidates_*.json
+    # ALWAYS WRITE
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     out_file = OUT_DIR / f"candidates_{ts}.json"
     with open(out_file, "w") as f:
@@ -222,5 +222,5 @@ def main():
     print(f"Candidates: {len(all_cands)}")
     print("=== END ===")
 
-if __name__ == "__main__":
+if __name__ == "__module__":
     main()
