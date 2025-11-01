@@ -1,8 +1,6 @@
 {
-  "last_run_utc": "2025-11-01T01:14:00Z",
-  "frames_downloaded": {
-    "lasco": 15,
-    "goes": 0
-  },
-  "candidates_found": 146
+  "timestamp_utc": "2025-11-01T15:24:55Z",
+  "total_candidates": 565,
+  "comets": 530,
+  "output_file": "detections/candidates_20251101_152455.json"
 }
