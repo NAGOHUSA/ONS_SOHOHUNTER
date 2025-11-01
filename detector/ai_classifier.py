@@ -2,6 +2,7 @@
 # Minimal, trainable stub classifier for SOHO crop patches.
 # - If detector/classifier/model.npz exists, loads linear weights.
 # - Else falls back to a simple heuristic.
+# - NOW WITH TIMESTAMP OVERLAY DETECTION
 # Returns: list of {"label": "...", "score": float in [0,1]}.
 
 import os
@@ -13,8 +14,108 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), "classifier")
 MODEL_PATH = os.path.join(MODEL_DIR, "model.npz")
 
 
+def _has_timestamp_overlay(gray: np.ndarray) -> bool:
+    """
+    Detect if image has timestamp overlay (bright text in corners).
+    Timestamps are typically very bright, high-contrast regions in corners.
+    """
+    if gray.size == 0:
+        return False
+    
+    h, w = gray.shape
+    if h < 16 or w < 16:
+        return False
+    
+    # Check all four corners for bright, high-contrast regions
+    corner_size_h = min(h // 6, 80)
+    corner_size_w = min(w // 6, 120)
+    
+    corners = [
+        gray[0:corner_size_h, 0:corner_size_w],                    # top-left
+        gray[0:corner_size_h, -corner_size_w:],                   # top-right
+        gray[-corner_size_h:, 0:corner_size_w],                   # bottom-left
+        gray[-corner_size_h:, -corner_size_w:]                    # bottom-right
+    ]
+    
+    for corner in corners:
+        if corner.size == 0:
+            continue
+        
+        brightness = np.mean(corner)
+        max_val = np.max(corner)
+        std_val = np.std(corner)
+        
+        # Timestamps characteristics:
+        # - Very bright (mean > 180, max near 255)
+        # - High local contrast/std (text edges)
+        # - Concentrated bright pixels
+        bright_pixel_ratio = np.sum(corner > 220) / corner.size
+        
+        if (brightness > 180 and max_val > 240 and std_val > 60) or \
+           (max_val > 245 and bright_pixel_ratio > 0.15):
+            return True
+    
+    return False
+
+
+def _is_edge_artifact(gray: np.ndarray) -> bool:
+    """
+    Detect if image is primarily an edge artifact or frame boundary issue.
+    Real comets should have signal in the center region.
+    """
+    if gray.size == 0:
+        return False
+    
+    h, w = gray.shape
+    if h < 20 or w < 20:
+        return False
+    
+    # Check center region - real comets should have signal here
+    center_h_start = h // 3
+    center_h_end = 2 * h // 3
+    center_w_start = w // 3
+    center_w_end = 2 * w // 3
+    
+    center = gray[center_h_start:center_h_end, center_w_start:center_w_end]
+    if center.size == 0:
+        return True
+    
+    center_brightness = np.mean(center)
+    center_max = np.max(center)
+    
+    # Check edges
+    edge_top = gray[0:h//10, :]
+    edge_bottom = gray[-h//10:, :]
+    edge_left = gray[:, 0:w//10]
+    edge_right = gray[:, -w//10:]
+    
+    edge_brightness = np.mean([
+        np.mean(edge_top) if edge_top.size > 0 else 0,
+        np.mean(edge_bottom) if edge_bottom.size > 0 else 0,
+        np.mean(edge_left) if edge_left.size > 0 else 0,
+        np.mean(edge_right) if edge_right.size > 0 else 0
+    ])
+    
+    # If edges are much brighter than center, likely an artifact
+    if edge_brightness > center_brightness * 1.5 and center_max < 150:
+        return True
+    
+    return False
+
+
 def _extract_features(gray: np.ndarray) -> np.ndarray:
     """Compute simple features: mean, std, edge_var, high_pct, low_pct, entropy-ish."""
+    
+    # Early rejection for timestamp overlays
+    if _has_timestamp_overlay(gray):
+        # Return features that will score very low
+        return np.array([30.0, 3.0, 5.0, 50.0, 20.0, 1.5], dtype=np.float32)
+    
+    # Early rejection for edge artifacts
+    if _is_edge_artifact(gray):
+        # Return features that will score very low
+        return np.array([35.0, 4.0, 8.0, 55.0, 25.0, 1.8], dtype=np.float32)
+    
     g = gray.astype(np.float32)
     mean = float(np.mean(g))
     std = float(np.std(g))
