@@ -1,138 +1,127 @@
 # detector/ai_classifier.py
-# Minimal, trainable stub classifier for SOHO crop patches.
-# - If detector/classifier/model.npz exists, loads linear weights.
-# - Else falls back to a simple heuristic.
-# - NOW WITH TIMESTAMP OVERLAY DETECTION
-# Returns: list of {"label": "...", "score": float in [0,1]}.
+# Trainable stub classifier for SOHO crops with hard guards against overlays.
+# If detector/classifier/model.npz exists, we use linear weights; otherwise a heuristic.
+# Returns: list of {"label": "...", "score": float}
 
 import os
 import cv2
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "classifier")
 MODEL_PATH = os.path.join(MODEL_DIR, "model.npz")
 
+# -------- Overlay / Artifact tests --------
 
 def _has_timestamp_overlay(gray: np.ndarray) -> bool:
     """
-    Detect if image has timestamp overlay (bright text in corners).
-    Timestamps are typically very bright, high-contrast regions in corners.
+    Detect very bright, high-contrast text blocks in corners/edges.
     """
-    if gray.size == 0:
+    if gray is None or gray.size == 0:
         return False
-    
     h, w = gray.shape
-    if h < 16 or w < 16:
+    if h < 32 or w < 32:
         return False
-    
-    # Check all four corners for bright, high-contrast regions
-    corner_size_h = min(h // 6, 80)
-    corner_size_w = min(w // 6, 120)
-    
-    corners = [
-        gray[0:corner_size_h, 0:corner_size_w],                    # top-left
-        gray[0:corner_size_h, -corner_size_w:],                   # top-right
-        gray[-corner_size_h:, 0:corner_size_w],                   # bottom-left
-        gray[-corner_size_h:, -corner_size_w:]                    # bottom-right
-    ]
-    
-    for corner in corners:
-        if corner.size == 0:
-            continue
-        
-        brightness = np.mean(corner)
-        max_val = np.max(corner)
-        std_val = np.std(corner)
-        
-        # Timestamps characteristics:
-        # - Very bright (mean > 180, max near 255)
-        # - High local contrast/std (text edges)
-        # - Concentrated bright pixels
-        bright_pixel_ratio = np.sum(corner > 220) / corner.size
-        
-        if (brightness > 180 and max_val > 240 and std_val > 60) or \
-           (max_val > 245 and bright_pixel_ratio > 0.15):
-            return True
-    
-    return False
 
+    # Corner/edge windows
+    cw = max(120, w // 8)
+    ch = max(80,  h // 8)
+    edge = max(22, min(h, w) // 40)
+
+    regions = [
+        gray[0:ch, 0:cw],                    # TL
+        gray[0:ch, w-cw:w],                  # TR
+        gray[h-ch:h, 0:cw],                  # BL
+        gray[h-ch:h, w-cw:w],                # BR
+        gray[0:edge, :],                     # top band
+        gray[h-edge:h, :],                   # bot band
+        gray[:, 0:edge],                     # left band
+        gray[:, w-edge:w],                   # right band
+    ]
+
+    for reg in regions:
+        if reg.size == 0:
+            continue
+        m = float(np.mean(reg))
+        mx = int(np.max(reg))
+        sd = float(np.std(reg))
+        bright_ratio = float(np.count_nonzero(reg > 220)) / float(reg.size)
+        if (m > 170 and mx > 240 and sd > 55) or (mx > 246 and bright_ratio > 0.12):
+            return True
+    return False
 
 def _is_edge_artifact(gray: np.ndarray) -> bool:
     """
-    Detect if image is primarily an edge artifact or frame boundary issue.
-    Real comets should have signal in the center region.
+    Edge-only frames or boundary glow: edges much brighter than center and center weak.
     """
-    if gray.size == 0:
+    if gray is None or gray.size == 0:
         return False
-    
     h, w = gray.shape
-    if h < 20 or w < 20:
+    if h < 24 or w < 24:
         return False
-    
-    # Check center region - real comets should have signal here
-    center_h_start = h // 3
-    center_h_end = 2 * h // 3
-    center_w_start = w // 3
-    center_w_end = 2 * w // 3
-    
-    center = gray[center_h_start:center_h_end, center_w_start:center_w_end]
+
+    ch0, ch1 = h // 3, 2 * h // 3
+    cw0, cw1 = w // 3, 2 * w // 3
+    center = gray[ch0:ch1, cw0:cw1]
     if center.size == 0:
         return True
-    
-    center_brightness = np.mean(center)
-    center_max = np.max(center)
-    
-    # Check edges
-    edge_top = gray[0:h//10, :]
-    edge_bottom = gray[-h//10:, :]
-    edge_left = gray[:, 0:w//10]
-    edge_right = gray[:, -w//10:]
-    
-    edge_brightness = np.mean([
-        np.mean(edge_top) if edge_top.size > 0 else 0,
-        np.mean(edge_bottom) if edge_bottom.size > 0 else 0,
-        np.mean(edge_left) if edge_left.size > 0 else 0,
-        np.mean(edge_right) if edge_right.size > 0 else 0
-    ])
-    
-    # If edges are much brighter than center, likely an artifact
-    if edge_brightness > center_brightness * 1.5 and center_max < 150:
+
+    center_mean = float(np.mean(center))
+    center_max  = int(np.max(center))
+
+    m = max(6, min(h, w) // 12)
+    edges = [
+        gray[0:m, :], gray[h-m:h, :], gray[:, 0:m], gray[:, w-m:w]
+    ]
+    edge_mean = float(np.mean(np.concatenate([e.flatten() for e in edges if e.size])))
+
+    if edge_mean > center_mean * 1.5 and center_max < 150:
         return True
-    
     return False
 
+def _near_border(gray: np.ndarray, border_px: int = 12) -> bool:
+    """If the brightest pixel lies too close to the border, treat it suspiciously."""
+    if gray is None or gray.size == 0:
+        return False
+    h, w = gray.shape
+    (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(gray)
+    x, y = maxLoc
+    return (x < border_px or y < border_px or x > w - 1 - border_px or y > h - 1 - border_px)
 
-def _extract_features(gray: np.ndarray) -> np.ndarray:
-    """Compute simple features: mean, std, edge_var, high_pct, low_pct, entropy-ish."""
-    
-    # Early rejection for timestamp overlays
-    if _has_timestamp_overlay(gray):
-        # Return features that will score very low
-        return np.array([30.0, 3.0, 5.0, 50.0, 20.0, 1.5], dtype=np.float32)
-    
-    # Early rejection for edge artifacts
-    if _is_edge_artifact(gray):
-        # Return features that will score very low
-        return np.array([35.0, 4.0, 8.0, 55.0, 25.0, 1.8], dtype=np.float32)
-    
+# -------- Features / Scoring --------
+
+def _extract_features(gray: np.ndarray) -> Tuple[np.ndarray, bool]:
+    """
+    Compute features; return (features, overlay_flag).
+    If overlay_flag is True, caller should force a very low score.
+    """
+    if gray is None or gray.size == 0:
+        return np.zeros(6, np.float32), False
+
+    overlay = _has_timestamp_overlay(gray)
+    edge_art = _is_edge_artifact(gray)
+
     g = gray.astype(np.float32)
     mean = float(np.mean(g))
-    std = float(np.std(g))
-    lap = cv2.Laplacian(g, cv2.CV_32F, ksize=3)
+    std  = float(np.std(g))
+    lap  = cv2.Laplacian(g, cv2.CV_32F, ksize=3)
     edge_var = float(np.var(lap))
-    hi = float(np.percentile(g, 95))
-    lo = float(np.percentile(g, 5))
+    hi   = float(np.percentile(g, 95))
+    lo   = float(np.percentile(g, 5))
     hist = cv2.calcHist([gray], [0], None, [32], [0, 256]).flatten()
     p = hist / (np.sum(hist) + 1e-6)
     entropy = float(-np.sum(p * np.log2(p + 1e-9)))
-    return np.array([mean, std, edge_var, hi, lo, entropy], dtype=np.float32)
 
+    feats = np.array([mean, std, edge_var, hi, lo, entropy], dtype=np.float32)
+
+    # If it looks like overlay or edge-only, tag it
+    if overlay or edge_art or _near_border(gray):
+        return feats, True
+    return feats, False
 
 def _score_linear(feats: np.ndarray, w: np.ndarray, b: float) -> float:
     s = float(np.dot(feats, w) + b)
     return 1.0 / (1.0 + np.exp(-s))
-
 
 def _load_model():
     if os.path.exists(MODEL_PATH):
@@ -140,16 +129,16 @@ def _load_model():
         return data["w"].astype(np.float32), float(data["b"])
     return None, None
 
-
 def _heuristic_score(feats: np.ndarray) -> float:
     mean, std, edge_var, hi, lo, entropy = feats.tolist()
-    std_n = min(std / 40.0, 1.0)
+    std_n  = min(std / 40.0, 1.0)
     edge_n = min(edge_var / 400.0, 1.0)
     span_n = min(max((hi - lo) / 255.0, 0.0), 1.0)
-    ent_n = min(entropy / 5.0, 1.0)
+    ent_n  = min(entropy / 5.0, 1.0)
     score = 0.15 * std_n + 0.45 * edge_n + 0.30 * span_n + 0.10 * (1.0 - abs(ent_n - 0.5) * 2.0)
     return float(max(0.0, min(1.0, score)))
 
+# -------- Public API --------
 
 def classify_crop_batch(crop_paths: List[str]) -> List[Dict[str, float]]:
     w, b = _load_model()
@@ -160,15 +149,23 @@ def classify_crop_batch(crop_paths: List[str]) -> List[Dict[str, float]]:
             if im is None:
                 out.append({"label": "unknown", "score": 0.0})
                 continue
-            h, w0 = im.shape[:2]
-            if max(h, w0) > 256:
-                scale = 256.0 / max(h, w0)
-                im = cv2.resize(im, (int(w0 * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-            feats = _extract_features(im)
+            # Normalize size (keeps aspect, max side 256)
+            h, ww = im.shape[:2]
+            if max(h, ww) > 256:
+                sc = 256.0 / max(h, ww)
+                im = cv2.resize(im, (int(ww * sc), int(h * sc)), interpolation=cv2.INTER_AREA)
+
+            feats, looks_like_overlay = _extract_features(im)
+
+            # Hard veto for overlays/edges/border hits
+            if looks_like_overlay:
+                out.append({"label": "not_comet", "score": 0.01})
+                continue
+
             s = _score_linear(feats, w, b) if w is not None else _heuristic_score(feats)
-            label = "comet" if s >= 0.5 else "not_comet"
-            out.append({"label": label, "score": float(s)})
+            out.append({"label": "comet" if s >= 0.5 else "not_comet", "score": float(s)})
+
         except Exception:
             out.append({"label": "unknown", "score": 0.0})
     return out
