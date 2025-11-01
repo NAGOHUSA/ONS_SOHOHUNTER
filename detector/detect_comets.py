@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Multi-source comet hunter: LASCO + GOES-19
-Robust Kalman tracker + AI classifier.
+Always writes candidates_*.json (even empty).
+Robust Kalman tracker.
 """
 
 import argparse
@@ -50,15 +51,13 @@ def simple_track_detect(frame_paths, instr, ts_list):
         if img is None:
             continue
 
-        # Pre-process
         img_f = gaussian_filter(img.astype(float) / 255.0, sigma=1.0) * 255
         img_f = np.clip(img_f, 0, 255).astype(np.uint8)
 
-        # Threshold
         _, thresh = cv2.threshold(img_f, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # ---- Predict ----
+        # Predict
         for entry in active_kfs[:]:
             kf, last_pos, age, tid = entry
             kf.predict()
@@ -69,8 +68,8 @@ def simple_track_detect(frame_paths, instr, ts_list):
             i = active_kfs.index(entry)
             active_kfs[i] = (kf, pred, age + 1, tid)
 
-        # ---- Measure ----
-        meas = []                     # (cx, cy, contour_index)
+        # Measure
+        meas = []  # (cx, cy, contour_index)
         for c_idx, cnt in enumerate(contours):
             M = cv2.moments(cnt)
             if M["m00"] < 12:
@@ -79,7 +78,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             cy = int(M["m01"] / M["m00"])
             meas.append((cx, cy, c_idx))
 
-        # ---- Associate ----
+        # Associate
         used = set()
         for kf_idx, (kf, pred, age, tid) in enumerate(active_kfs):
             best_dist = float("inf")
@@ -90,17 +89,18 @@ def simple_track_detect(frame_paths, instr, ts_list):
                 d = (mx - pred[0]) ** 2 + (my - pred[1]) ** 2
                 if d < best_dist:
                     best_dist = d
-                    best_meas = (mx, my, c_idx)
+                    best_meas = (mx, my, c_idx, m_idx)
             if best_meas and best_dist < 80 ** 2:
-                mx, my, c_idx = best_meas
+                mx, my, c_idx, m_idx = best_meas
                 kf.update(np.array([[mx], [my]]))
                 i = active_kfs.index((kf, pred, age, tid))
                 active_kfs[i] = (kf, (mx, my), 0, tid)
-                used.add(meas.index((mx, my, c_idx)))
+                used.add(m_idx)
 
-        # ---- New tracks ----
+        # New tracks
         for mx, my, c_idx in meas:
-            if meas.index((mx, my, c_idx)) in used:
+            m_idx = meas.index((mx, my, c_idx))
+            if m_idx in used:
                 continue
             kf = KalmanFilter(dim_x=4, dim_z=2)
             kf.x[:2, 0] = np.array([mx, my])
@@ -112,7 +112,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             active_kfs.append((kf, (mx, my), 0, next_id))
             next_id += 1
 
-        # ---- Evaluate mature tracks ----
+        # Evaluate
         for kf, pos, age, tid in active_kfs[:]:
             if age == 0 and len([p for p in paired[:idx+1] if p[1] <= ts]) >= 4:
                 h, w = img_f.shape
@@ -142,7 +142,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
 
     return candidates
 
-# ---- Status & Run ----
+# Status & Run
 def write_status(frames_dict, timestamps_dict):
     total = sum(len(frames_dict.get(i, [])) for i in INSTRS)
     status = {
@@ -169,7 +169,7 @@ def write_latest_run(downloaded, candidates_count):
             "candidates_found": candidates_count
         }, f, indent=2)
 
-# ---- CLI ----
+# CLI
 parser = argparse.ArgumentParser()
 parser.add_argument("--hours", type=int, default=int(os.getenv("HOURS", "6")))
 parser.add_argument("--step-min", type=int, default=int(os.getenv("STEP_MIN", "12")))
@@ -206,10 +206,12 @@ def main():
             cands = simple_track_detect(frames[instr], instr, timestamps[instr])
             all_cands.extend(cands)
 
-    if all_cands:
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        with open(OUT_DIR / f"candidates_{ts}.json", "w") as f:
-            json.dump(all_cands, f, indent=2)
+    # ALWAYS WRITE candidates_*.json
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    out_file = OUT_DIR / f"candidates_{ts}.json"
+    with open(out_file, "w") as f:
+        json.dump(all_cands, f, indent=2)
+    print(f"Wrote {len(all_cands)} candidates → {out_file.name}")
 
     write_status(frames, timestamps)
     write_latest_run(downloaded, len(all_cands))
