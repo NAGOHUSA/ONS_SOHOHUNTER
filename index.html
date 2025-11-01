@@ -650,7 +650,7 @@ select:focus {
   <div class="container">
     <div class="header-content">
       <div class="header-title">
-        <h1>🌟 SOHO Comet Hunter 2.5</h1>
+        <h1>🌟 SOHO Comet Hunter 2.6</h1>
         <div class="header-subtitle">Professional Comet Detection Dashboard</div>
       </div>
       <div class="header-actions">
@@ -836,7 +836,24 @@ const CONFIG = {
   refreshInterval: 5 * 60 * 1000 // 5 minutes
 };
 
-const RAW_URL = (path) => `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.branch}/${path}`;
+const RAW_URL = (path) => {
+  // Handle paths that might already be complete or need detections/ prefix
+  if (!path) return '';
+  
+  // If path starts with detections/, use as-is
+  if (path.startsWith('detections/')) {
+    return `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.branch}/${path}`;
+  }
+  
+  // If path starts with crops/ or other subfolder, prepend detections/
+  if (path.startsWith('crops/') || path.startsWith('animations/') || path.startsWith('thumbnails/')) {
+    return `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.branch}/detections/${path}`;
+  }
+  
+  // Otherwise assume it's a full path from root
+  return `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.branch}/${path}`;
+};
+
 const API_URL = `https://api.github.com/repos/${CONFIG.repo}/contents/${CONFIG.folder}?ref=${CONFIG.branch}`;
 
 // State
