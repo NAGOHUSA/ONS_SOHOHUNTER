@@ -53,27 +53,17 @@ MAX_ASSOC_DIST = 100  # pixels between frames
 # ==================== TIMESTAMP / OVERLAY MASK ====================
 
 def build_timestamp_mask(h: int, w: int) -> np.ndarray:
-    """
-    Build a binary mask for LASCO overlays (timestamps/labels) in the corners/edges.
-    Returns mask with 255 where we want to IGNORE (i.e., masked-out).
-    """
+    """Build a binary mask for LASCO overlays (255 = ignore)."""
     mask = np.zeros((h, w), np.uint8)
 
-    # Corner boxes: LASCO overlays usually live close to corners.
-    # Conservative sizes; you can tweak if your frames differ.
     cw = max(120, w // 8)   # corner width
     ch = max(80,  h // 8)   # corner height
-
-    # Edges often hold thin tick marks/text; add slim margins too.
     edge = max(28, min(h, w) // 36)
 
-    # Top-left
+    # Corners
     mask[0:ch, 0:cw] = 255
-    # Top-right
     mask[0:ch, w-cw:w] = 255
-    # Bottom-left
     mask[h-ch:h, 0:cw] = 255
-    # Bottom-right
     mask[h-ch:h, w-cw:w] = 255
 
     # Thin edge bands
@@ -98,9 +88,7 @@ def bbox_intersects_mask(bbox, mask: np.ndarray, min_overlap_px: int = 25) -> bo
     return int(np.count_nonzero(sub)) >= min_overlap_px
 
 def is_timestamp_artifact(bbox, frame_width, frame_height) -> bool:
-    """
-    Heuristic spatial filter for text-like corner/edge detections.
-    """
+    """Heuristic spatial filter for text-like corner/edge detections."""
     if len(bbox) < 4:
         return False
     x, y, w, h = bbox[:4]
@@ -122,7 +110,6 @@ def is_timestamp_artifact(bbox, frame_width, frame_height) -> bool:
 
     tiny = (w < 30 or h < 30) and in_corner
 
-    # Corner text or narrow edge labels
     if in_corner and (text_shaped or tiny):
         return True
     if on_edge and text_shaped and (w < 260 or h < 48):
@@ -131,9 +118,7 @@ def is_timestamp_artifact(bbox, frame_width, frame_height) -> bool:
     return False
 
 def filter_detections_spatial(candidates, frame_width, frame_height, mask: np.ndarray, frame_gray: np.ndarray):
-    """
-    Filter out timestamp/edge artifacts with spatial + photometric cues.
-    """
+    """Filter out timestamp/edge artifacts."""
     filtered = []
     removed = 0
 
@@ -142,17 +127,14 @@ def filter_detections_spatial(candidates, frame_width, frame_height, mask: np.nd
         if not bbox or len(bbox) < 4:
             continue
 
-        # 1) If it sits in the masked region, drop it.
         if bbox_intersects_mask(bbox, mask):
             removed += 1
             continue
 
-        # 2) Heuristic corner/edge text shape
         if is_timestamp_artifact(bbox, frame_width, frame_height):
             removed += 1
             continue
 
-        # 3) Photometric: bright-pixel ratio (text overlay tends to have lots of near-255 pixels)
         x, y, w, h = [int(v) for v in bbox[:4]]
         x2, y2 = x + w, y + h
         x, y = max(0, x), max(0, y)
@@ -162,7 +144,6 @@ def filter_detections_spatial(candidates, frame_width, frame_height, mask: np.nd
             continue
 
         bright_ratio = float(np.count_nonzero(roi > 220)) / float(roi.size)
-        # Strong threshold if near edges/corners; lenient otherwise
         if bright_ratio > 0.35:
             removed += 1
             continue
@@ -170,16 +151,13 @@ def filter_detections_spatial(candidates, frame_width, frame_height, mask: np.nd
         filtered.append(c)
 
     if removed:
-        print(f"  ✓ Removed {removed} timestamp/edge artifacts")
+        print(f"  Removed {removed} timestamp/edge artifacts")
     return filtered
 
 # ==================== FRAME FETCHING ====================
 
 def fetch_lasco_frames(hours=6, step_min=12):
-    """
-    Fetch LASCO C2/C3 frames from NASA or local cache (via fetch_lasco.py if present).
-    Returns: (frame_paths, timestamps, download_count)
-    """
+    """Fetch LASCO frames from NASA or local cache."""
     print(f"Fetching LASCO frames (last {hours}h, step {step_min}min)...")
     try:
         from fetch_lasco import fetch_window
@@ -187,7 +165,6 @@ def fetch_lasco_frames(hours=6, step_min=12):
         timestamps = []
         for frame_path in frames:
             try:
-                # Example filename: C2_20251027_1248_c2_1024.jpg
                 parts = Path(frame_path).stem.split('_')
                 if len(parts) >= 3:
                     date_str, time_str = parts[1], parts[2]
@@ -197,7 +174,7 @@ def fetch_lasco_frames(hours=6, step_min=12):
                     timestamps.append(datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
             except:
                 timestamps.append(datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"))
-        print(f"✓ Fetched {len(frames)} frames")
+        print(f"Fetched {len(frames)} frames")
         return frames, timestamps, len(frames)
     except ImportError:
         print("Warning: fetch_lasco module not found, using fallback (existing frames)")
@@ -212,10 +189,7 @@ def fetch_lasco_frames(hours=6, step_min=12):
 # ==================== BASIC DETECTION ====================
 
 def detect_candidates(frame_paths, timestamps):
-    """
-    Bright-object detection with pre-masking of timestamp overlays.
-    Returns list of candidates (each has bbox, timestamp, etc.)
-    """
+    """Bright-object detection with pre-masking of timestamp overlays."""
     print(f"Running detection on {len(frame_paths)} frames...")
     if len(frame_paths) < 1:
         print("No frames to process")
@@ -230,19 +204,13 @@ def detect_candidates(frame_paths, timestamps):
                 continue
             h, w = frame.shape[:2]
 
-            # Set instrument based on frame_path
             instr = "LASCO C2" if "c2" in Path(frame_path).name.lower() else "LASCO C3"
 
-            # 1) Mask timestamp/edge regions BEFORE thresholding/contours
             ts_mask = build_timestamp_mask(h, w)
             frame_masked = frame.copy()
-            frame_masked[ts_mask == 255] = 0  # zero-out overlays
+            frame_masked[ts_mask == 255] = 0
 
-            # 2) Threshold bright features (tweakable)
-            # Use adaptive or high fixed threshold; timestamps already zeroed.
             _, thresh = cv2.threshold(frame_masked, 200, 255, cv2.THRESH_BINARY)
-
-            # 3) Small morphology to connect tiny comet cores a bit (but not text; it's masked)
             kernel = np.ones((3, 3), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
 
@@ -251,11 +219,9 @@ def detect_candidates(frame_paths, timestamps):
             for cnt in contours:
                 x, y, bw, bh = cv2.boundingRect(cnt)
 
-                # Size guard
                 if bw < 8 or bh < 8 or bw > 220 or bh > 220:
                     continue
 
-                # Reject any residual overlap with masked areas
                 if bbox_intersects_mask((x, y, bw, bh), ts_mask, min_overlap_px=10):
                     continue
 
@@ -265,104 +231,91 @@ def detect_candidates(frame_paths, timestamps):
                     "bbox": [int(x), int(y), int(bw), int(bh)],
                     "frame_path": frame_path,
                     "image_size": [h, w],
-                    # keep mask + frame gray for later spatial filtering
                     "_ts_mask": ts_mask,
-                    "_frame_gray": frame  # for photometric filter
+                    "_frame_gray": frame
                 })
 
         except Exception as e:
             print(f"Error processing {frame_path}: {e}")
             continue
 
-    print(f"✓ Found {len(candidates)} initial detections")
+    print(f"Found {len(candidates)} initial detections")
     return candidates
 
 # ==================== SPATIAL FILTER ====================
 
 def apply_spatial_filter(candidates):
+    """Apply per-candidate filtering using stored mask/gray."""
     filtered = []
     for c in candidates:
         bbox = c["bbox"]
         w, h = c["image_size"][1], c["image_size"][0]
         mask = c["_ts_mask"]
         gray = c["_frame_gray"]
-        if not filter_detections_spatial([c], w, h, mask, gray):
-            continue
-        filtered.append(c)
+        # filter_detections_spatial expects a list
+        kept = filter_detections_spatial([c], w, h, mask, gray)
+        if kept:
+            filtered.append(kept[0])
     return filtered
 
 # ==================== TRACKING ====================
 
 def associate_tracks(candidates):
-    """
-    Simple nearest-neighbor association across frames.
-    Assumes frames are processed in time order.
-    """
+    """Simple nearest-neighbor association across frames."""
     print("Associating tracks across frames...")
-    # Group by timestamp
     time_groups = defaultdict(list)
     for c in candidates:
         time_groups[c['timestamp']].append(c)
 
-    # Sort timestamps
     sorted_times = sorted(time_groups.keys())
-
     active_tracks = []
-    track_id = 0
+    track_id_counter = 0
 
     for t in sorted_times:
         current_dets = time_groups[t]
         new_active = []
+        assigned = set()
 
-        assigned_tracks = set()
-
-        for det in current_dets:  # for each det in current frame
+        for det in current_dets:
+            best = None
             min_dist = float('inf')
-            best_track = None
-
-            for j, track in enumerate(active_tracks):
-                if j in assigned_tracks:
+            for j, tr in enumerate(active_tracks):
+                if j in assigned:
                     continue
-                last = track[-1]
+                last = tr[-1]
                 dx = det['bbox'][0] - last['bbox'][0]
                 dy = det['bbox'][1] - last['bbox'][1]
                 dist = np.sqrt(dx**2 + dy**2)
                 if dist < min_dist and dist < MAX_ASSOC_DIST:
                     min_dist = dist
-                    best_track = j
-
-            if best_track is not None:
-                active_tracks[best_track].append(det)
-                new_active.append(active_tracks[best_track])
-                assigned_tracks.add(best_track)
+                    best = j
+            if best is not None:
+                active_tracks[best].append(det)
+                new_active.append(active_tracks[best])
+                assigned.add(best)
             else:
                 new_track = [det]
                 new_active.append(new_track)
 
-        # Add unassigned old tracks to new_active (they continue without update)
-        for j, track in enumerate(active_tracks):
-            if j not in assigned_tracks:
-                new_active.append(track)
+        for j, tr in enumerate(active_tracks):
+            if j not in assigned:
+                new_active.append(tr)
 
         active_tracks = new_active
 
-    # Assign track_ids
-    track_id = 0
+    # Assign final track IDs
     for track in active_tracks:
         for det in track:
-            det['track_id'] = track_id
-        track_id += 1
+            det['track_id'] = track_id_counter
+        track_id_counter += 1
 
-    print(f"✓ Associated {len(active_tracks)} tracks")
+    print(f"Associated {len(active_tracks)} tracks")
     return candidates
 
 # ==================== SAVE ORIGINALS / ANNOTATED ====================
 
 def save_frame_assets(candidates):
-    """
-    Save original and annotated full frames per unique frame.
-    Draw all bboxes on annotated.
-    """
+    """Save clean originals + annotated frames (green boxes)."""
     print("Saving originals and annotated frames...")
     ORIGINALS_DIR.mkdir(parents=True, exist_ok=True)
     ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
@@ -381,19 +334,22 @@ def save_frame_assets(candidates):
             stem = Path(frame_path).stem
             instr = dets[0]['instrument'].replace(' ', '_').lower()
 
-            orig_filename = f"{instr}_{stem}.jpg"
+            # Original
+            orig_filename = f"lasco_{instr}_{stem}.jpg"
             orig_path = ORIGINALS_DIR / orig_filename
             cv2.imwrite(str(orig_path), frame)
 
+            # Annotated
             ann_frame = frame.copy()
             for d in dets:
                 x, y, w, h = d['bbox']
                 cv2.rectangle(ann_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            ann_filename = f"{instr}_{stem}_annotated.jpg"
+            ann_filename = f"lasco_{instr}_{stem}_annotated.jpg"
             ann_path = ANNOTATED_DIR / ann_filename
             cv2.imwrite(str(ann_path), ann_frame)
 
+            # Attach paths to every detection in this frame
             for d in dets:
                 d['original_path'] = f"originals/{orig_filename}"
                 d['annotated_path'] = f"annotated/{ann_filename}"
@@ -402,14 +358,12 @@ def save_frame_assets(candidates):
         except Exception as e:
             print(f"Error saving assets for {frame_path}: {e}")
 
-    print(f"✓ Saved assets for {saved} frames")
+    print(f"Saved assets for {saved} frames")
 
 # ==================== CROP EXTRACTION ====================
 
 def extract_crops(candidates):
-    """
-    Extract crops for each candidate (with padding), save under detections/crops/.
-    """
+    """Extract padded crops → detections/crops/."""
     print(f"Extracting {len(candidates)} crops...")
     CROPS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -435,9 +389,10 @@ def extract_crops(candidates):
             if crop.size == 0:
                 continue
 
-            timestamp = (c.get("timestamp", "unknown") or "unknown").replace(":", "").replace("-", "").replace("T", "_").replace("Z", "")
+            # Filename: lasco_track{TID}_{TIMESTAMP}.png
+            ts_clean = (c.get("timestamp") or "unknown").replace(":", "").replace("-", "").replace("T", "_").replace("Z", "")
             tid = c.get("track_id", 0)
-            crop_filename = f"lasco_track{tid}_{timestamp}.png"
+            crop_filename = f"lasco_track{tid}_{ts_clean}.png"
             crop_path = CROPS_DIR / crop_filename
             cv2.imwrite(str(crop_path), crop)
 
@@ -447,7 +402,7 @@ def extract_crops(candidates):
             print(f"Error extracting crop for track {c.get('track_id')}: {e}")
             continue
 
-    print(f"✓ Extracted {len(extracted)} crops")
+    print(f"Extracted {len(extracted)} crops")
     return extracted
 
 # ==================== AI CLASSIFICATION ====================
@@ -481,7 +436,6 @@ def classify_candidates(candidates):
         for idx, res in zip(valid_idx, results):
             label = res.get("label", "unknown")
             score = res.get("score", 0.0)
-            # Optional veto: if the model shouts "not_comet" with large confidence, force it.
             if AI_VETO and label == AI_VETO_LABEL and score > AI_VETO_MAX:
                 candidates[idx]["ai_label"] = "vetoed"
                 candidates[idx]["ai_score"] = score
@@ -490,7 +444,7 @@ def classify_candidates(candidates):
                 candidates[idx]["ai_score"] = score
             if candidates[idx]["ai_label"] == "comet":
                 comet_count += 1
-        print(f"✓ Classification complete: {comet_count} comets identified")
+        print(f"Classification complete: {comet_count} comets identified")
     except Exception as e:
         print(f"Error during classification: {e}")
         for c in candidates:
@@ -525,7 +479,7 @@ def save_results(candidates, output_dir):
 
     with open(out_file, "w") as f:
         json.dump(clean, f, indent=2)
-    print(f"✓ Saved {len(clean)} candidates to {out_file}")
+    print(f"Saved {len(clean)} candidates to {out_file}")
 
     summary = {
         "timestamp_utc": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -557,27 +511,19 @@ def main():
         print("No frames available.")
         return
 
-    # Initial candidates (with timestamp regions zeroed before thresholding)
     candidates = detect_candidates(frame_paths, timestamps)
     if not candidates:
         print("No candidates detected.")
         return
 
-    # Spatial/photometric filtering against overlays
-    # Since per frame, but to simplify, assume all same size, use first for mask/gray
-    # But better, filter per candidate with its _frame_gray etc.
     candidates = apply_spatial_filter(candidates)
-    print(f"✓ {len(candidates)} candidates remain after filtering\n")
+    print(f"{len(candidates)} candidates remain after filtering\n")
     if not candidates:
         print("All candidates filtered out.")
         return
 
-    # Associate into tracks
     candidates = associate_tracks(candidates)
-
-    # Save frame assets (originals, annotated)
     save_frame_assets(candidates)
-
     candidates = extract_crops(candidates)
     if not candidates:
         print("No crops extracted.")
