@@ -5,7 +5,7 @@ SOHO Comet Detection Pipeline
 - Masks timestamp + central occulter
 - Detects comets only
 - Tracks, crops, annotates
-- Saves JSON + images + **animated GIFs**
+- Saves JSON + images + **animated GIFs** (FIXED: uniform size)
 """
 
 from datetime import datetime
@@ -43,7 +43,7 @@ DETECTIONS_DIR = Path("detections")
 CROPS_DIR = DETECTIONS_DIR / "crops"
 ORIGINALS_DIR = DETECTIONS_DIR / "originals"
 ANNOTATED_DIR = DETECTIONS_DIR / "annotated"
-GIF_DIR = DETECTIONS_DIR / "gifs"          # <-- NEW
+GIF_DIR = DETECTIONS_DIR / "gifs"
 GIF_DIR.mkdir(parents=True, exist_ok=True)
 
 USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"
@@ -69,10 +69,9 @@ def build_timestamp_mask(h: int, w: int) -> np.ndarray:
     return mask
 
 def mask_central_occulter(frame: np.ndarray, buffer: int = 20) -> np.ndarray:
-    """Mask central dark disk + bright ring."""
     h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
-    radius = int(min(w, h) * 0.18)  # ~180px
+    radius = int(min(w, h) * 0.18)
     y, x = np.ogrid[:h, :w]
     mask = (x - cx)**2 + (y - cy)**2 <= (radius + buffer)**2
     masked = frame.copy()
@@ -137,7 +136,6 @@ def detect_candidates(frame_paths, timestamps):
                 if bw < 8 or bh < 8 or bw > 220 or bh > 220: continue
                 if bbox_intersects_mask((x,y,bw,bh), ts_mask, 10): continue
 
-                # store centroid for 3D
                 cx = x + bw // 2
                 cy = y + bh // 2
 
@@ -243,14 +241,13 @@ def associate_tracks(candidates):
                 new_active.append(tr)
         active_tracks = new_active
 
-    # assign track_id + collect positions
     for track in active_tracks:
         positions = []
         for det in track:
             det['track_id'] = track_id
             positions.append({"x": det['centroid'][0], "y": det['centroid'][1]})
         for det in track:
-            det['positions'] = positions  # attach to all in track
+            det['positions'] = positions
         track_id += 1
 
     print(f"Associated {len(active_tracks)} tracks")
@@ -293,7 +290,18 @@ def save_frame_assets(candidates):
             print(f"Save error {fp}: {e}")
     print(f"Saved {saved} frames")
 
-# ==================== CROP + GIF ====================
+# ==================== CROP + GIF (FIXED SIZE) ====================
+def pad_to_size(img, target_h, target_w):
+    """Pad image to target size with black borders (center-aligned)."""
+    h, w = img.shape[:2]
+    pad_h = target_h - h
+    pad_w = target_w - w
+    top = pad_h // 2
+    bottom = pad_h - top
+    left = pad_w // 2
+    right = pad_w - left
+    return cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=0)
+
 def extract_crops_and_gifs(candidates):
     print(f"Extracting crops + GIFs for {len(candidates)} detections...")
     CROPS_DIR.mkdir(parents=True, exist_ok=True)
@@ -309,6 +317,19 @@ def extract_crops_and_gifs(candidates):
         seq = sorted(seq, key=lambda x: x['timestamp'])
         crop_frames = []
         ann_frames = []
+
+        # Determine max crop size in track
+        max_w = max_h = 0
+        for c in seq:
+            bbox = c.get("bbox", [])
+            if len(bbox) < 4: continue
+            x, y, w, h = [int(v) for v in bbox]
+            pad = 12
+            crop_w = w + 2 * pad
+            crop_h = h + 2 * pad
+            max_w = max(max_w, crop_w)
+            max_h = max(max_h, crop_h)
+        target_size = (max_w, max_h)
 
         for c in seq:
             try:
@@ -326,36 +347,38 @@ def extract_crops_and_gifs(candidates):
                 crop = frame[y1:y2, x1:x2]
                 if crop.size == 0: continue
 
-                # save crop
-                ts = (c.get("timestamp") or "unknown").replace(":", "").replace("-", "").replace("T", "_").replace("Z", "")
-                crop_fn = f"lasco_track{tid}_{ts}.png"
-                crop_path = CROPS_DIR / crop_fn
-                cv2.imwrite(str(crop_path), crop)
-                c["crop_path"] = f"crops/{crop_fn}"
+                # Resize/pad to uniform size
+                crop = pad_to_size(crop, *target_size)
+                crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                crop_frames.append(crop_rgb)
 
-                # collect for GIF (RGB)
-                crop_frames.append(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-
-                # annotated crop
+                # Annotated
                 ann = crop.copy()
                 rx = x - x1; ry = y - y1
                 cv2.rectangle(ann, (rx, ry), (rx+w, ry+h), (0,255,0), 2)
                 ann_frames.append(cv2.cvtColor(ann, cv2.COLOR_BGR2RGB))
+
+                # Save individual crop
+                ts = (c.get("timestamp") or "unknown").replace(":", "").replace("-", "").replace("T", "_").replace("Z", "")
+                crop_fn = f"lasco_track{tid}_{ts}.png"
+                crop_path = CROPS_DIR / crop_fn
+                cv2.imwrite(str(crop_path), cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2BGR))
+                c["crop_path"] = f"crops/{crop_fn}"
 
                 extracted.append(c)
             except Exception as e:
                 print(f"Crop/GIF error: {e}")
                 continue
 
-        # build GIFs if ≥2 frames + imageio
+        # Build GIFs if ≥2 frames
         if len(crop_frames) >= 2 and GIF_AVAILABLE:
             gif_base = f"track{tid}"
             crop_gif_path = GIF_DIR / f"{gif_base}_crop.gif"
-            imageio.mimsave(str(crop_gif_path), crop_frames, fps=4, loop=0)
             ann_gif_path = GIF_DIR / f"{gif_base}_ann.gif"
+
+            imageio.mimsave(str(crop_gif_path), crop_frames, fps=4, loop=0)
             imageio.mimsave(str(ann_gif_path), ann_frames, fps=4, loop=0)
 
-            # attach to all in track
             for c in seq:
                 c["animation_gif_crop"] = f"gifs/{crop_gif_path.name}"
                 c["animation_gif_ann"] = f"gifs/{ann_gif_path.name}"
@@ -426,7 +449,6 @@ def save_results(candidates, out_dir):
             "ai_score": c.get("ai_score", 0.0),
             "positions": c.get("positions", []),
         }
-        # GIF paths (may be missing)
         if c.get("animation_gif_crop"):
             entry["animation_gif_crop"] = c["animation_gif_crop"]
         if c.get("animation_gif_ann"):
@@ -457,7 +479,7 @@ def main():
     args = p.parse_args()
 
     print("="*60)
-    print("SOHO COMET HUNTER + GIF")
+    print("SOHO COMET HUNTER + GIF (FIXED)")
     print("="*60)
 
     paths, ts, _ = fetch_lasco_frames(args.hours, args.step_min)
@@ -477,7 +499,7 @@ def main():
 
     cand = associate_tracks(cand)
     save_frame_assets(cand)
-    cand = extract_crops_and_gifs(cand)      # <-- GIFs here
+    cand = extract_crops_and_gifs(cand)
     if not cand:
         print("No crops")
         return
