@@ -5,8 +5,7 @@ SOHO Comet Detection Pipeline
 - Masks timestamp + central occulter
 - Detects comets only
 - Tracks, crops, annotates
-- Saves JSON + images
-- Adds positions for 3D viewer
+- Saves JSON + images + **animated GIFs**
 """
 
 from datetime import datetime
@@ -18,6 +17,17 @@ import os
 import sys
 from collections import defaultdict
 
+# -------------------------------------------------
+# GIF generation helper (uses imageio)
+# -------------------------------------------------
+try:
+    import imageio
+    GIF_AVAILABLE = True
+except Exception:  # pragma: no cover
+    GIF_AVAILABLE = False
+    print("Warning: imageio not installed – GIF generation disabled. Run: pip install imageio[ffmpeg]")
+
+# -------------------------------------------------
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
@@ -33,6 +43,8 @@ DETECTIONS_DIR = Path("detections")
 CROPS_DIR = DETECTIONS_DIR / "crops"
 ORIGINALS_DIR = DETECTIONS_DIR / "originals"
 ANNOTATED_DIR = DETECTIONS_DIR / "annotated"
+GIF_DIR = DETECTIONS_DIR / "gifs"          # <-- NEW
+GIF_DIR.mkdir(parents=True, exist_ok=True)
 
 USE_AI = os.getenv("USE_AI_CLASSIFIER", "1") == "1"
 AI_VETO = os.getenv("AI_VETO_ENABLED", "1") == "1"
@@ -57,10 +69,9 @@ def build_timestamp_mask(h: int, w: int) -> np.ndarray:
     return mask
 
 def mask_central_occulter(frame: np.ndarray, buffer: int = 20) -> np.ndarray:
-    """Mask central dark disk + bright ring."""
     h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
-    radius = int(min(w, h) * 0.18)  # ~180px
+    radius = int(min(w, h) * 0.18)
     y, x = np.ogrid[:h, :w]
     mask = (x - cx)**2 + (y - cy)**2 <= (radius + buffer)**2
     masked = frame.copy()
@@ -109,13 +120,11 @@ def detect_candidates(frame_paths, timestamps):
 
             instr = "LASCO C2" if "c2" in Path(fp).name.lower() else "LASCO C3"
 
-            # MASK: timestamp + central occulter
             frame_masked = frame.copy()
             ts_mask = build_timestamp_mask(h, w)
             frame_masked[ts_mask == 255] = 0
-            frame_masked = mask_central_occulter(frame_masked, buffer=25)  # KEY FIX
+            frame_masked = mask_central_occulter(frame_masked, buffer=25)
 
-            # Threshold bright features
             _, thresh = cv2.threshold(frame_masked, 200, 255, cv2.THRESH_BINARY)
             kernel = np.ones((3,3), np.uint8)
             thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
@@ -124,22 +133,25 @@ def detect_candidates(frame_paths, timestamps):
 
             for cnt in contours:
                 x, y, bw, bh = cv2.boundingRect(cnt)
-                if bw < 8 or bh < 8 or bw > 220 or bh > 220:
-                    continue
-                if bbox_intersects_mask((x,y,bw,bh), ts_mask, 10):
-                    continue
+                if bw < 8 or bh < 8 or bw > 220 or bh > 220: continue
+                if bbox_intersects_mask((x,y,bw,bh), ts_mask, 10): continue
+
+                # ---- store centroid for 3D track ----
+                cx = x + bw // 2
+                cy = y + bh // 2
 
                 candidates.append({
                     "instrument": instr,
                     "timestamp": timestamps[i] if i < len(timestamps) else "",
                     "bbox": [x, y, bw, bh],
+                    "centroid": [cx, cy],
                     "frame_path": fp,
                     "image_size": [h, w],
                     "_ts_mask": ts_mask,
                     "_frame_gray": frame
                 })
         except Exception as e:
-            print(f"Error: {fp} → {e}")
+            print(f"Error {fp}: {e}")
             continue
 
     print(f"Found {len(candidates)} candidates")
@@ -160,12 +172,8 @@ def is_timestamp_artifact(bbox, fw, fh):
     x, y, w, h = bbox[:4]
     cm = max(100, min(fw, fh)//9)
     em = max(50, min(fw, fh)//22)
-    in_corner = (
-        (x < cm and y < cm) or
-        (x + w > fw - cm and y < cm) or
-        (x < cm and y + h > fh - cm) or
-        (x + w > fw - cm and y + h > fh - cm)
-    )
+    in_corner = ((x < cm and y < cm) or (x + w > fw - cm and y < cm) or
+                 (x < cm and y + h > fh - cm) or (x + w > fw - cm and y + h > fh - cm))
     on_edge = (y < em or y + h > fh - em or x < em or x + w > fw - em)
     aspect = w / h if h > 0 else 0
     text_shaped = (2.0 < aspect < 10.0 and w < 320 and h < 80)
@@ -173,8 +181,7 @@ def is_timestamp_artifact(bbox, fw, fh):
     return (in_corner and (text_shaped or tiny)) or (on_edge and text_shaped and (w < 260 or h < 48))
 
 def filter_detections_spatial(candidates, fw, fh, mask, gray):
-    filtered = []
-    removed = 0
+    filtered, removed = [], 0
     for c in candidates:
         bbox = c.get("bbox", [])
         if not bbox or len(bbox) < 4: continue
@@ -201,11 +208,12 @@ def apply_spatial_filter(candidates):
     return filtered
 
 # ==================== TRACKING ====================
-function associate_tracks(candidates):
+def associate_tracks(candidates):
     print("Tracking...")
     time_groups = defaultdict(list)
     for c in candidates:
         time_groups[c['timestamp']].append(c)
+
     sorted_times = sorted(time_groups.keys())
     active_tracks = []
     track_id = 0
@@ -234,9 +242,14 @@ function associate_tracks(candidates):
                 new_active.append(tr)
         active_tracks = new_active
 
+    # ---- assign track_id + collect positions ----
     for track in active_tracks:
         for det in track:
             det['track_id'] = track_id
+            # centroid list for 3D viewer
+            if 'positions' not in det:
+                det['positions'] = []
+            det['positions'].append({"x": det['centroid'][0], "y": det['centroid'][1]})
         track_id += 1
 
     print(f"Associated {len(active_tracks)} tracks")
@@ -279,35 +292,78 @@ def save_frame_assets(candidates):
             print(f"Save error {fp}: {e}")
     print(f"Saved {saved} frames")
 
-# ==================== CROP EXTRACTION ====================
-def extract_crops(candidates):
-    print(f"Extracting {len(candidates)} crops...")
+# ==================== CROP + GIF ====================
+def extract_crops_and_gifs(candidates):
+    print(f"Extracting crops + GIFs for {len(candidates)} detections...")
     CROPS_DIR.mkdir(parents=True, exist_ok=True)
-    extracted = []
+
+    # group by track_id
+    tracks = defaultdict(list)
     for c in candidates:
-        try:
-            fp = c.get("frame_path")
-            bbox = c.get("bbox", [])
-            if not fp or len(bbox) < 4: continue
-            frame = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
-            if frame is None: continue
-            x, y, w, h = bbox
-            pad = 10
-            x1, y1 = max(0, x-pad), max(0, y-pad)
-            x2, y2 = min(frame.shape[1], x+w+pad), min(frame.shape[0], y+h+pad)
-            crop = frame[y1:y2, x1:x2]
-            if crop.size == 0: continue
-            ts = (c.get("timestamp") or "unknown").replace(":", "").replace("-", "").replace("T", "_").replace("Z", "")
-            tid = c.get("track_id", 0)
-            fn = f"lasco_track{tid}_{ts}.png"
-            path = CROPS_DIR / fn
-            cv2.imwrite(str(path), crop)
-            c["crop_path"] = f"crops/{fn}"
-            extracted.append(c)
-        except Exception as e:
-            print(f"Crop error: {e}")
-            continue
-    print(f"Extracted {len(extracted)} crops")
+        tracks[c['track_id']].append(c)
+
+    extracted = []
+    gif_count = 0
+
+    for tid, seq in tracks.items():
+        seq = sorted(seq, key=lambda x: x['timestamp'])
+        crop_frames = []
+        ann_frames  = []
+
+        for c in seq:
+            try:
+                fp = c.get("frame_path")
+                bbox = c.get("bbox", [])
+                if not fp or len(bbox) < 4: continue
+                frame = cv2.imread(fp, cv2.IMREAD_COLOR)
+                if frame is None: continue
+
+                x, y, w, h = [int(v) for v in bbox]
+                pad = 12
+                x1, y1 = max(0, x-pad), max(0, y-pad)
+                x2, y2 = min(frame.shape[1], x+w+pad), min(frame.shape[0], y+h+pad)
+
+                crop = frame[y1:y2, x1:x2]
+                if crop.size == 0: continue
+
+                # ---- save individual crop ----
+                ts = (c.get("timestamp") or "unknown").replace(":", "").replace("-", "").replace("T", "_").replace("Z", "")
+                crop_fn = f"lasco_track{tid}_{ts}.png"
+                crop_path = CROPS_DIR / crop_fn
+                cv2.imwrite(str(crop_path), crop)
+                c["crop_path"] = f"crops/{crop_fn}"
+
+                # ---- collect frames for GIF ----
+                crop_frames.append(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+
+                # annotated version (same crop, rectangle drawn)
+                ann = crop.copy()
+                rx = x - x1; ry = y - y1
+                cv2.rectangle(ann, (rx, ry), (rx+w, ry+h), (0,255,0), 2)
+                ann_frames.append(cv2.cvtColor(ann, cv2.COLOR_BGR2RGB))
+
+                extracted.append(c)
+            except Exception as e:
+                print(f"Crop/GIF error: {e}")
+                continue
+
+        # ---- build GIFs (if we have ≥2 frames) ----
+        if len(crop_frames) >= 2 and GIF_AVAILABLE:
+            gif_base = f"track{tid}"
+            # cropped GIF
+            crop_gif_path = GIF_DIR / f"{gif_base}_crop.gif"
+            imageio.mimsave(str(crop_gif_path), crop_frames, fps=4, loop=0)
+            # annotated GIF
+            ann_gif_path = GIF_DIR / f"{gif_base}_ann.gif"
+            imageio.mimsave(str(ann_gif_path), ann_frames, fps=4, loop=0)
+
+            # attach to every detection in the track
+            for c in seq:
+                c["animation_gif_crop"] = f"gifs/{crop_gif_path.name}"
+                c["animation_gif_ann"]  = f"gifs/{ann_gif_path.name}"
+            gif_count += 1
+
+    print(f"Extracted {len(extracted)} crops, created {gif_count} GIFs")
     return extracted
 
 # ==================== AI CLASSIFY ====================
@@ -358,18 +414,26 @@ def save_results(candidates, out_dir):
 
     clean = []
     for c in candidates:
-        clean.append({
+        entry = {
             "instrument": c.get("instrument"),
             "timestamp": c.get("timestamp"),
             "track_id": c.get("track_id"),
             "bbox": c.get("bbox"),
+            "centroid": c.get("centroid"),
             "crop_path": c.get("crop_path"),
             "original_path": c.get("original_path"),
             "annotated_path": c.get("annotated_path"),
             "image_size": c.get("image_size"),
             "ai_label": c.get("ai_label", "unknown"),
             "ai_score": c.get("ai_score", 0.0),
-        })
+            "positions": c.get("positions", []),
+        }
+        # GIF paths (may be missing)
+        if c.get("animation_gif_crop"):
+            entry["animation_gif_crop"] = c["animation_gif_crop"]
+        if c.get("animation_gif_ann"):
+            entry["animation_gif_ann"] = c["animation_gif_ann"]
+        clean.append(entry)
 
     with open(file, "w") as f:
         json.dump(clean, f, indent=2)
@@ -395,7 +459,7 @@ def main():
     args = p.parse_args()
 
     print("="*60)
-    print("SOHO COMET HUNTER")
+    print("SOHO COMET HUNTER + GIF")
     print("="*60)
 
     paths, ts, _ = fetch_lasco_frames(args.hours, args.step_min)
@@ -415,7 +479,7 @@ def main():
 
     cand = associate_tracks(cand)
     save_frame_assets(cand)
-    cand = extract_crops(cand)
+    cand = extract_crops_and_gifs(cand)      # <-- GIFs here
     if not cand:
         print("No crops")
         return
