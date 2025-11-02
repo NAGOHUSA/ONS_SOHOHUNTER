@@ -1,6 +1,6 @@
 {
-  "timestamp_utc": "2025-11-02T01:28:15Z",
-  "total_candidates": 102,
+  "timestamp_utc": "2025-11-02T02:11:10Z",
+  "total_candidates": 93,
   "comets": 7,
-  "output_file": "detections/candidates_20251102_012815.json"
+  "output_file": "detections/candidates_20251102_021110.json"
 }
