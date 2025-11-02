@@ -69,9 +69,10 @@ def build_timestamp_mask(h: int, w: int) -> np.ndarray:
     return mask
 
 def mask_central_occulter(frame: np.ndarray, buffer: int = 20) -> np.ndarray:
+    """Mask central dark disk + bright ring."""
     h, w = frame.shape[:2]
     cx, cy = w // 2, h // 2
-    radius = int(min(w, h) * 0.18)
+    radius = int(min(w, h) * 0.18)  # ~180px
     y, x = np.ogrid[:h, :w]
     mask = (x - cx)**2 + (y - cy)**2 <= (radius + buffer)**2
     masked = frame.copy()
@@ -136,7 +137,7 @@ def detect_candidates(frame_paths, timestamps):
                 if bw < 8 or bh < 8 or bw > 220 or bh > 220: continue
                 if bbox_intersects_mask((x,y,bw,bh), ts_mask, 10): continue
 
-                # ---- store centroid for 3D track ----
+                # store centroid for 3D
                 cx = x + bw // 2
                 cy = y + bh // 2
 
@@ -242,14 +243,14 @@ def associate_tracks(candidates):
                 new_active.append(tr)
         active_tracks = new_active
 
-    # ---- assign track_id + collect positions ----
+    # assign track_id + collect positions
     for track in active_tracks:
+        positions = []
         for det in track:
             det['track_id'] = track_id
-            # centroid list for 3D viewer
-            if 'positions' not in det:
-                det['positions'] = []
-            det['positions'].append({"x": det['centroid'][0], "y": det['centroid'][1]})
+            positions.append({"x": det['centroid'][0], "y": det['centroid'][1]})
+        for det in track:
+            det['positions'] = positions  # attach to all in track
         track_id += 1
 
     print(f"Associated {len(active_tracks)} tracks")
@@ -297,7 +298,6 @@ def extract_crops_and_gifs(candidates):
     print(f"Extracting crops + GIFs for {len(candidates)} detections...")
     CROPS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # group by track_id
     tracks = defaultdict(list)
     for c in candidates:
         tracks[c['track_id']].append(c)
@@ -308,7 +308,7 @@ def extract_crops_and_gifs(candidates):
     for tid, seq in tracks.items():
         seq = sorted(seq, key=lambda x: x['timestamp'])
         crop_frames = []
-        ann_frames  = []
+        ann_frames = []
 
         for c in seq:
             try:
@@ -326,17 +326,17 @@ def extract_crops_and_gifs(candidates):
                 crop = frame[y1:y2, x1:x2]
                 if crop.size == 0: continue
 
-                # ---- save individual crop ----
+                # save crop
                 ts = (c.get("timestamp") or "unknown").replace(":", "").replace("-", "").replace("T", "_").replace("Z", "")
                 crop_fn = f"lasco_track{tid}_{ts}.png"
                 crop_path = CROPS_DIR / crop_fn
                 cv2.imwrite(str(crop_path), crop)
                 c["crop_path"] = f"crops/{crop_fn}"
 
-                # ---- collect frames for GIF ----
+                # collect for GIF (RGB)
                 crop_frames.append(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
 
-                # annotated version (same crop, rectangle drawn)
+                # annotated crop
                 ann = crop.copy()
                 rx = x - x1; ry = y - y1
                 cv2.rectangle(ann, (rx, ry), (rx+w, ry+h), (0,255,0), 2)
@@ -347,20 +347,18 @@ def extract_crops_and_gifs(candidates):
                 print(f"Crop/GIF error: {e}")
                 continue
 
-        # ---- build GIFs (if we have ≥2 frames) ----
+        # build GIFs if ≥2 frames + imageio
         if len(crop_frames) >= 2 and GIF_AVAILABLE:
             gif_base = f"track{tid}"
-            # cropped GIF
             crop_gif_path = GIF_DIR / f"{gif_base}_crop.gif"
             imageio.mimsave(str(crop_gif_path), crop_frames, fps=4, loop=0)
-            # annotated GIF
             ann_gif_path = GIF_DIR / f"{gif_base}_ann.gif"
             imageio.mimsave(str(ann_gif_path), ann_frames, fps=4, loop=0)
 
-            # attach to every detection in the track
+            # attach to all in track
             for c in seq:
                 c["animation_gif_crop"] = f"gifs/{crop_gif_path.name}"
-                c["animation_gif_ann"]  = f"gifs/{ann_gif_path.name}"
+                c["animation_gif_ann"] = f"gifs/{ann_gif_path.name}"
             gif_count += 1
 
     print(f"Extracted {len(extracted)} crops, created {gif_count} GIFs")
