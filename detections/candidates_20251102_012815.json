@@ -1,0 +1,1430 @@
+[
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:48:00Z",
+    "track_id": 6,
+    "bbox": [
+      128,
+      976,
+      32,
+      20
+    ],
+    "crop_path": "crops/lasco_track6_2025-11-01T184800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:48:00Z",
+    "track_id": 8,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track8_2025-11-01T184800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:36:00Z",
+    "track_id": 16,
+    "bbox": [
+      128,
+      978,
+      30,
+      18
+    ],
+    "crop_path": "crops/lasco_track16_2025-11-01T183600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:36:00Z",
+    "track_id": 18,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track18_2025-11-01T183600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:24:00Z",
+    "track_id": 19,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track19_2025-11-01T182400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:24:00Z",
+    "track_id": 25,
+    "bbox": [
+      128,
+      977,
+      30,
+      19
+    ],
+    "crop_path": "crops/lasco_track25_2025-11-01T182400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:24:00Z",
+    "track_id": 27,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track27_2025-11-01T182400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:12:00Z",
+    "track_id": 37,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track37_2025-11-01T181200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:00:00Z",
+    "track_id": 39,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track39_2025-11-01T180000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:00:00Z",
+    "track_id": 47,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track47_2025-11-01T180000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:48:00Z",
+    "track_id": 54,
+    "bbox": [
+      128,
+      977,
+      30,
+      19
+    ],
+    "crop_path": "crops/lasco_track54_2025-11-01T174800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:48:00Z",
+    "track_id": 56,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track56_2025-11-01T174800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:36:00Z",
+    "track_id": 67,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track67_2025-11-01T173600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:24:00Z",
+    "track_id": 68,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track68_2025-11-01T172400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:24:00Z",
+    "track_id": 74,
+    "bbox": [
+      128,
+      978,
+      30,
+      18
+    ],
+    "crop_path": "crops/lasco_track74_2025-11-01T172400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:24:00Z",
+    "track_id": 76,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track76_2025-11-01T172400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:12:00Z",
+    "track_id": 84,
+    "bbox": [
+      128,
+      978,
+      30,
+      18
+    ],
+    "crop_path": "crops/lasco_track84_2025-11-01T171200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:12:00Z",
+    "track_id": 86,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track86_2025-11-01T171200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:00:00Z",
+    "track_id": 88,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track88_2025-11-01T170000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:00:00Z",
+    "track_id": 97,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track97_2025-11-01T170000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:48:00Z",
+    "track_id": 104,
+    "bbox": [
+      128,
+      977,
+      30,
+      19
+    ],
+    "crop_path": "crops/lasco_track104_2025-11-01T164800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:48:00Z",
+    "track_id": 106,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track106_2025-11-01T164800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:36:00Z",
+    "track_id": 117,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track117_2025-11-01T163600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:24:00Z",
+    "track_id": 118,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track118_2025-11-01T162400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:24:00Z",
+    "track_id": 127,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track127_2025-11-01T162400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:12:00Z",
+    "track_id": 137,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track137_2025-11-01T161200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:00:00Z",
+    "track_id": 139,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track139_2025-11-01T160000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:00:00Z",
+    "track_id": 148,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track148_2025-11-01T160000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:48:00Z",
+    "track_id": 158,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track158_2025-11-01T154800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:36:00Z",
+    "track_id": 169,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track169_2025-11-01T153600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:24:00Z",
+    "track_id": 170,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track170_2025-11-01T152400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:24:00Z",
+    "track_id": 179,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track179_2025-11-01T152400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:12:00Z",
+    "track_id": 189,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track189_2025-11-01T151200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:00:00Z",
+    "track_id": 191,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track191_2025-11-01T150000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:00:00Z",
+    "track_id": 200,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track200_2025-11-01T150000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:48:00Z",
+    "track_id": 209,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track209_2025-11-01T144800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:36:00Z",
+    "track_id": 219,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track219_2025-11-01T143600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:24:00Z",
+    "track_id": 220,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track220_2025-11-01T142400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:24:00Z",
+    "track_id": 228,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track228_2025-11-01T142400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:24:00Z",
+    "track_id": 229,
+    "bbox": [
+      689,
+      431,
+      13,
+      12
+    ],
+    "crop_path": "crops/lasco_track229_2025-11-01T142400Z.png",
+    "ai_label": "comet",
+    "ai_score": 0.8575624836192411
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:12:00Z",
+    "track_id": 236,
+    "bbox": [
+      128,
+      976,
+      30,
+      20
+    ],
+    "crop_path": "crops/lasco_track236_2025-11-01T141200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:12:00Z",
+    "track_id": 238,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track238_2025-11-01T141200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:12:00Z",
+    "track_id": 239,
+    "bbox": [
+      689,
+      429,
+      12,
+      13
+    ],
+    "crop_path": "crops/lasco_track239_2025-11-01T141200Z.png",
+    "ai_label": "comet",
+    "ai_score": 0.8577852630615234
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:00:00Z",
+    "track_id": 241,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track241_2025-11-01T140000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:00:00Z",
+    "track_id": 246,
+    "bbox": [
+      128,
+      977,
+      30,
+      19
+    ],
+    "crop_path": "crops/lasco_track246_2025-11-01T140000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:00:00Z",
+    "track_id": 248,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track248_2025-11-01T140000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:00:00Z",
+    "track_id": 249,
+    "bbox": [
+      690,
+      431,
+      10,
+      12
+    ],
+    "crop_path": "crops/lasco_track249_2025-11-01T140000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:48:00Z",
+    "track_id": 258,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track258_2025-11-01T134800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:48:00Z",
+    "track_id": 259,
+    "bbox": [
+      689,
+      432,
+      11,
+      10
+    ],
+    "crop_path": "crops/lasco_track259_2025-11-01T134800Z.png",
+    "ai_label": "comet",
+    "ai_score": 0.8604225826263427
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:36:00Z",
+    "track_id": 267,
+    "bbox": [
+      128,
+      979,
+      32,
+      17
+    ],
+    "crop_path": "crops/lasco_track267_2025-11-01T133600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:36:00Z",
+    "track_id": 269,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track269_2025-11-01T133600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:36:00Z",
+    "track_id": 270,
+    "bbox": [
+      690,
+      429,
+      11,
+      12
+    ],
+    "crop_path": "crops/lasco_track270_2025-11-01T133600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:25:00Z",
+    "track_id": 272,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track272_2025-11-01T132500Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:25:00Z",
+    "track_id": 278,
+    "bbox": [
+      128,
+      979,
+      32,
+      17
+    ],
+    "crop_path": "crops/lasco_track278_2025-11-01T132500Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:25:00Z",
+    "track_id": 280,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track280_2025-11-01T132500Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:48:00Z",
+    "track_id": 289,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track289_2025-11-01T124800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:48:00Z",
+    "track_id": 290,
+    "bbox": [
+      689,
+      427,
+      13,
+      16
+    ],
+    "crop_path": "crops/lasco_track290_2025-11-01T124800Z.png",
+    "ai_label": "comet",
+    "ai_score": 0.8607118954378016
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:36:00Z",
+    "track_id": 298,
+    "bbox": [
+      128,
+      977,
+      30,
+      19
+    ],
+    "crop_path": "crops/lasco_track298_2025-11-01T123600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:36:00Z",
+    "track_id": 300,
+    "bbox": [
+      429,
+      436,
+      168,
+      167
+    ],
+    "crop_path": "crops/lasco_track300_2025-11-01T123600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:36:00Z",
+    "track_id": 301,
+    "bbox": [
+      689,
+      427,
+      13,
+      18
+    ],
+    "crop_path": "crops/lasco_track301_2025-11-01T123600Z.png",
+    "ai_label": "comet",
+    "ai_score": 0.8598438706117517
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:54:00Z",
+    "track_id": 310,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track310_2025-11-01T185400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:42:00Z",
+    "track_id": 319,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track319_2025-11-01T184200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:30:00Z",
+    "track_id": 329,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track329_2025-11-01T183000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:18:00Z",
+    "track_id": 339,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track339_2025-11-01T181800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:06:00Z",
+    "track_id": 341,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track341_2025-11-01T180600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T18:06:00Z",
+    "track_id": 349,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track349_2025-11-01T180600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:54:00Z",
+    "track_id": 358,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track358_2025-11-01T175400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:42:00Z",
+    "track_id": 367,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track367_2025-11-01T174200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:30:00Z",
+    "track_id": 377,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track377_2025-11-01T173000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:18:00Z",
+    "track_id": 387,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track387_2025-11-01T171800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:06:00Z",
+    "track_id": 389,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track389_2025-11-01T170600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T17:06:00Z",
+    "track_id": 397,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track397_2025-11-01T170600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:54:00Z",
+    "track_id": 406,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track406_2025-11-01T165400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:42:00Z",
+    "track_id": 415,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track415_2025-11-01T164200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:30:00Z",
+    "track_id": 425,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track425_2025-11-01T163000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:18:00Z",
+    "track_id": 435,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track435_2025-11-01T161800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:06:00Z",
+    "track_id": 437,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track437_2025-11-01T160600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T16:06:00Z",
+    "track_id": 445,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track445_2025-11-01T160600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:54:00Z",
+    "track_id": 454,
+    "bbox": [
+      459,
+      569,
+      8,
+      11
+    ],
+    "crop_path": "crops/lasco_track454_2025-11-01T155400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:54:00Z",
+    "track_id": 455,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track455_2025-11-01T155400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:42:00Z",
+    "track_id": 464,
+    "bbox": [
+      460,
+      565,
+      11,
+      14
+    ],
+    "crop_path": "crops/lasco_track464_2025-11-01T154200Z.png",
+    "ai_label": "comet",
+    "ai_score": 0.8197772688024184
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:42:00Z",
+    "track_id": 465,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track465_2025-11-01T154200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:30:00Z",
+    "track_id": 475,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track475_2025-11-01T153000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:18:00Z",
+    "track_id": 485,
+    "bbox": [
+      462,
+      564,
+      9,
+      12
+    ],
+    "crop_path": "crops/lasco_track485_2025-11-01T151800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:18:00Z",
+    "track_id": 486,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track486_2025-11-01T151800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:06:00Z",
+    "track_id": 488,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track488_2025-11-01T150600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T15:06:00Z",
+    "track_id": 496,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track496_2025-11-01T150600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:54:00Z",
+    "track_id": 504,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track504_2025-11-01T145400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:42:00Z",
+    "track_id": 512,
+    "bbox": [
+      460,
+      565,
+      10,
+      14
+    ],
+    "crop_path": "crops/lasco_track512_2025-11-01T144200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:42:00Z",
+    "track_id": 513,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track513_2025-11-01T144200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:30:00Z",
+    "track_id": 522,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track522_2025-11-01T143000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:18:00Z",
+    "track_id": 531,
+    "bbox": [
+      461,
+      562,
+      11,
+      14
+    ],
+    "crop_path": "crops/lasco_track531_2025-11-01T141800Z.png",
+    "ai_label": "comet",
+    "ai_score": 0.832088658949908
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:18:00Z",
+    "track_id": 532,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track532_2025-11-01T141800Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:06:00Z",
+    "track_id": 534,
+    "bbox": [
+      309,
+      988,
+      16,
+      8
+    ],
+    "crop_path": "crops/lasco_track534_2025-11-01T140600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:06:00Z",
+    "track_id": 541,
+    "bbox": [
+      462,
+      563,
+      10,
+      12
+    ],
+    "crop_path": "crops/lasco_track541_2025-11-01T140600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T14:06:00Z",
+    "track_id": 542,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track542_2025-11-01T140600Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:54:00Z",
+    "track_id": 551,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track551_2025-11-01T135400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:42:00Z",
+    "track_id": 560,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track560_2025-11-01T134200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T13:30:00Z",
+    "track_id": 570,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track570_2025-11-01T133000Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:54:00Z",
+    "track_id": 579,
+    "bbox": [
+      460,
+      562,
+      13,
+      15
+    ],
+    "crop_path": "crops/lasco_track579_2025-11-01T125400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:54:00Z",
+    "track_id": 580,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track580_2025-11-01T125400Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  },
+  {
+    "instrument": "LASCO",
+    "timestamp": "2025-11-01T12:42:00Z",
+    "track_id": 589,
+    "bbox": [
+      499,
+      475,
+      38,
+      37
+    ],
+    "crop_path": "crops/lasco_track589_2025-11-01T124200Z.png",
+    "ai_label": "not_comet",
+    "ai_score": 0.01
+  }
+]
