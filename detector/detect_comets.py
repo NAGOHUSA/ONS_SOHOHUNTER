@@ -6,6 +6,7 @@ SOHO Comet Detection Pipeline
 - Detects comets only
 - Tracks, crops, annotates
 - Saves JSON + images
+- Adds positions for 3D viewer
 """
 
 from datetime import datetime
@@ -200,7 +201,7 @@ def apply_spatial_filter(candidates):
     return filtered
 
 # ==================== TRACKING ====================
-def associate_tracks(candidates):
+function associate_tracks(candidates):
     print("Tracking...")
     time_groups = defaultdict(list)
     for c in candidates:
