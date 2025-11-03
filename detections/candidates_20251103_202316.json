@@ -1,0 +1,70 @@
+[
+  {
+    "instrument": "LASCO C2",
+    "timestamp": "2025-11-03T12:24:00Z",
+    "track_id": 1,
+    "bbox": [
+      540,
+      717,
+      20,
+      28
+    ],
+    "centroid": [
+      550,
+      731
+    ],
+    "crop_path": "crops/lasco_track1_20251103_122400.png",
+    "original_path": "originals/lasco_lasco_c2_C2_20251103_1224_c2_1024.jpg",
+    "annotated_path": "annotated/lasco_lasco_c2_C2_20251103_1224_c2_1024_annotated.jpg",
+    "image_size": [
+      1024,
+      1024
+    ],
+    "ai_label": "not_comet",
+    "ai_score": 0.01,
+    "positions": [
+      {
+        "x": 550,
+        "y": 731
+      },
+      {
+        "x": 590,
+        "y": 730
+      }
+    ]
+  },
+  {
+    "instrument": "LASCO C3",
+    "timestamp": "2025-11-03T12:30:00Z",
+    "track_id": 0,
+    "bbox": [
+      394,
+      307,
+      31,
+      29
+    ],
+    "centroid": [
+      409,
+      321
+    ],
+    "crop_path": "crops/lasco_track0_20251103_123000.png",
+    "original_path": "originals/lasco_lasco_c3_C3_20251103_1230_c3_1024.jpg",
+    "annotated_path": "annotated/lasco_lasco_c3_C3_20251103_1230_c3_1024_annotated.jpg",
+    "image_size": [
+      1024,
+      1024
+    ],
+    "ai_label": "not_comet",
+    "ai_score": 0.01,
+    "positions": [
+      {
+        "x": 409,
+        "y": 321
+      },
+      {
+        "x": 400,
+        "y": 324
+      }
+    ]
+  }
+]
