@@ -172,7 +172,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             for m_idx, (mx, my) in enumerate(meas):
                 if m_idx in used:
                     continue
-                d = (mx - pred[0]) ** 2 + (my - pred[1]) ** 2
+                d = ((mx - pred[0]) ** 2 + (my - pred[1]) ** 2
                 if d < best_dist:
                     best_dist = d
                     best_meas = (mx, my)
@@ -182,9 +182,10 @@ def simple_track_detect(frame_paths, instr, ts_list):
                 active_kfs[i] = (kf, best_meas, 0, tid)
                 used.add(best_idx)
 
-        # ---- spawn new tracks ----
+        # ---- spawn new tracks (use np.array_equal for safety) ----
         for mx, my in meas:
-            if any((mx, my) == p for _, p, _, _ in active_kfs):
+            # check if this point is already tracked
+            if any(np.array_equal(np.array([mx, my]), np.array(p)) for _, p, _, _ in active_kfs):
                 continue
             kf = KalmanFilter(dim_x=4, dim_z=2)
             kf.x[:2] = np.array([mx, my]).reshape(2, 1)
