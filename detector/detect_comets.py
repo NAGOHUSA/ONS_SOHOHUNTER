@@ -172,7 +172,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             for m_idx, (mx, my) in enumerate(meas):
                 if m_idx in used:
                     continue
-                d = ((mx - pred[0]) ** 2 + (my - pred[1]) ** 2
+                d = ((mx - pred[0]) ** 2 + (my - pred[1]) ** 2)  # <-- FIXED: added closing )
                 if d < best_dist:
                     best_dist = d
                     best_meas = (mx, my)
