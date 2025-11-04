@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
 import base64
+import re
 from groq import Groq
 
 # ----------------------------------------------------------------------
@@ -172,7 +173,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             for m_idx, (mx, my) in enumerate(meas):
                 if m_idx in used:
                     continue
-                d = ((mx - pred[0]) ** 2 + (my - pred[1]) ** 2)  # <-- FIXED: added closing )
+                d = ((mx - pred[0]) ** 2 + (my - pred[1]) ** 2)
                 if d < best_dist:
                     best_dist = d
                     best_meas = (mx, my)
@@ -182,9 +183,8 @@ def simple_track_detect(frame_paths, instr, ts_list):
                 active_kfs[i] = (kf, best_meas, 0, tid)
                 used.add(best_idx)
 
-        # ---- spawn new tracks (use np.array_equal for safety) ----
+        # ---- spawn new tracks ----
         for mx, my in meas:
-            # check if this point is already tracked
             if any(np.array_equal(np.array([mx, my]), np.array(p)) for _, p, _, _ in active_kfs):
                 continue
             kf = KalmanFilter(dim_x=4, dim_z=2)
@@ -216,15 +216,37 @@ def simple_track_detect(frame_paths, instr, ts_list):
                     final_path = crop_dir / crop_name
                     cv2.imwrite(str(final_path), crop)
 
-                    candidates.append({
-                        "instrument": f"LASCO {instr}",
+                    # --------------------------------------------------------------
+                    # ONE CANDIDATE PER TRACK → store every position we ever saw
+                    # --------------------------------------------------------------
+                    track = next((c for c in candidates if c["track_id"] == tid), None)
+                    if track is None:
+                        track = {
+                            "instrument": f"LASCO {instr}",
+                            "track_id": tid,
+                            "first_seen": ts,
+                            "last_seen": ts,
+                            "positions": [],          # <-- list of {timestamp, x, y}
+                            "bbox": [x-32, y-32, 64, 64],
+                            "crop_path": f"crops/{crop_name}",
+                            "ai_label": cls["label"],
+                            "ai_score": round(cls["score"], 3),
+                            "groq_label": None,
+                            "groq_score": 0.0,
+                            "groq_description": ""
+                        }
+                        candidates.append(track)
+                    else:
+                        track["last_seen"] = ts
+                        track["ai_label"] = cls["label"]
+                        track["ai_score"] = round(cls["score"], 3)
+                        track["crop_path"] = f"crops/{crop_name}"
+
+                    # always keep the latest position for the 3-D viewer
+                    track["positions"].append({
                         "timestamp": ts,
-                        "track_id": tid,
-                        "bbox": [x-32, y-32, 64, 64],
-                        "crop_path": f"crops/{crop_name}",
-                        "ai_label": cls["label"],
-                        "ai_score": round(cls["score"], 3),
-                        "pos": {"x": x, "y": y}
+                        "x": x,
+                        "y": y
                     })
 
     return candidates
@@ -281,16 +303,17 @@ def advanced_groq_classify(candidates):
                 model="llama-3.2-90b-vision-preview"
             )
             txt = resp.choices[0].message.content.lower()
-            label = "comet" if "comet" in txt else "not_comet"
-            score = 0.0
-            desc = "N/A"
-            if "score:" in txt:
-                try:
-                    score = float(txt.split("score:")[1].split()[0])
-                except:
-                    pass
-            if "description:" in txt:
-                desc = txt.split("description:")[1].strip()
+
+            # --------------------------------------------------------------
+            # GROQ → robust regex parsing
+            # --------------------------------------------------------------
+            label_match = re.search(r"label:\s*(comet|not_comet)", txt)
+            score_match = re.search(r"score:\s*([0-9]*\.?[0-9]+)", txt)
+            desc_match  = re.search(r"description:\s*(.+)", txt, re.DOTALL)
+
+            label = label_match.group(1) if label_match else ("comet" if "comet" in txt else "not_comet")
+            score = float(score_match.group(1)) if score_match else 0.0
+            desc  = desc_match.group(1).strip() if desc_match else "N/A"
 
             c["groq_label"] = label
             c["groq_score"] = score
