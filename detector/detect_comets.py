@@ -42,7 +42,7 @@ GROQ_LIMIT_HOURS = 12
 GROQ_MAX_CALLS = 2
 
 # ----------------------------------------------------------------------
-# LASCO URL TEMPLATES (the missing constants)
+# LASCO URL TEMPLATES
 # ----------------------------------------------------------------------
 C2_URL = (
     "https://soho.nascom.nasa.gov/data/REPROCESSING/Completed/"
@@ -128,7 +128,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
 
     paired = sorted(zip(frame_paths, ts_list), key=lambda x: x[1])
     candidates = []
-    active_kfs = []          # (kf, last_pos, age, tid)
+    active_kfs = []          # list of **tuples**: (kf, last_pos, age, tid)
     next_id = 0
 
     for idx, (path, ts) in enumerate(paired):
@@ -145,16 +145,14 @@ def simple_track_detect(frame_paths, instr, ts_list):
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # ---- predict existing tracks ----
-        for entry in active_kfs[:]:
-            kf, last_pos, age, tid = entry
+        new_active = []
+        for kf, last_pos, age, tid in active_kfs:
             kf.predict()
             pred = kf.x[:2, 0].astype(int)
             if age > 3:
-                active_kfs.remove(entry)
-                continue
-            entry = (kf, pred, age + 1, tid)
-            i = active_kfs.index(entry)
-            active_kfs[i] = entry
+                continue                     # drop stale tracks
+            new_active.append((kf, pred, age + 1, tid))
+        active_kfs = new_active
 
         # ---- measurements ----
         meas = []
@@ -167,9 +165,10 @@ def simple_track_detect(frame_paths, instr, ts_list):
 
         # ---- associate (nearest, max 80 px) ----
         used = set()
-        for kf_idx, (kf, pred, age, tid) in enumerate(active_kfs):
+        for i, (kf, pred, age, tid) in enumerate(active_kfs):
             best_dist = float("inf")
             best_meas = None
+            best_idx = -1
             for m_idx, (mx, my) in enumerate(meas):
                 if m_idx in used:
                     continue
@@ -177,14 +176,15 @@ def simple_track_detect(frame_paths, instr, ts_list):
                 if d < best_dist:
                     best_dist = d
                     best_meas = (mx, my)
+                    best_idx = m_idx
             if best_meas and best_dist < 80 ** 2:
                 kf.update(np.array(best_meas).reshape(2, 1))
-                active_kfs[kf_idx] = (kf, best_meas, 0, tid)
-                used.add(meas.index(best_meas))
+                active_kfs[i] = (kf, best_meas, 0, tid)
+                used.add(best_idx)
 
         # ---- spawn new tracks ----
         for mx, my in meas:
-            if (mx, my) in [p for _, p, _, _ in active_kfs]:
+            if any((mx, my) == p for _, p, _, _ in active_kfs):
                 continue
             kf = KalmanFilter(dim_x=4, dim_z=2)
             kf.x[:2] = np.array([mx, my]).reshape(2, 1)
@@ -195,7 +195,7 @@ def simple_track_detect(frame_paths, instr, ts_list):
             next_id += 1
 
         # ---- evaluate mature tracks (≥4 frames) ----
-        for kf, pos, age, tid in active_kfs[:]:
+        for kf, pos, age, tid in active_kfs:
             if age == 0 and len([p for p in paired[:idx+1] if p[1] <= ts]) >= 4:
                 h, w = img_f.shape
                 x, y = pos
