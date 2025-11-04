@@ -6,6 +6,7 @@
 import os
 import cv2
 import numpy as np
+import re
 from typing import List, Dict, Tuple
 
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "classifier")
@@ -14,29 +15,26 @@ MODEL_PATH = os.path.join(MODEL_DIR, "model.npz")
 # -------- Overlay / Artifact tests --------
 
 def _has_timestamp_overlay(gray: np.ndarray) -> bool:
-    """
-    Detect very bright, high-contrast text blocks in corners/edges.
-    """
+    """Detect very bright, high-contrast text blocks in corners/edges."""
     if gray is None or gray.size == 0:
         return False
     h, w = gray.shape
     if h < 32 or w < 32:
         return False
 
-    # Corner/edge windows
     cw = max(120, w // 8)
     ch = max(80,  h // 8)
     edge = max(22, min(h, w) // 40)
 
     regions = [
-        gray[0:ch, 0:cw],                    # TL
-        gray[0:ch, w-cw:w],                  # TR
-        gray[h-ch:h, 0:cw],                  # BL
-        gray[h-ch:h, w-cw:w],                # BR
-        gray[0:edge, :],                     # top band
-        gray[h-edge:h, :],                   # bot band
-        gray[:, 0:edge],                     # left band
-        gray[:, w-edge:w],                   # right band
+        gray[0:ch, 0:cw],
+        gray[0:ch, w-cw:w],
+        gray[h-ch:h, 0:cw],
+        gray[h-ch:h, w-cw:w],
+        gray[0:edge, :],
+        gray[h-edge:h, :],
+        gray[:, 0:edge],
+        gray[:, w-edge:w],
     ]
 
     for reg in regions:
@@ -51,9 +49,7 @@ def _has_timestamp_overlay(gray: np.ndarray) -> bool:
     return False
 
 def _is_edge_artifact(gray: np.ndarray) -> bool:
-    """
-    Edge-only frames or boundary glow: edges much brighter than center and center weak.
-    """
+    """Edge-only frames or boundary glow."""
     if gray is None or gray.size == 0:
         return False
     h, w = gray.shape
@@ -80,7 +76,7 @@ def _is_edge_artifact(gray: np.ndarray) -> bool:
     return False
 
 def _near_border(gray: np.ndarray, border_px: int = 12) -> bool:
-    """If the brightest pixel lies too close to the border, treat it suspiciously."""
+    """Brightest pixel too close to border."""
     if gray is None or gray.size == 0:
         return False
     h, w = gray.shape
@@ -91,10 +87,6 @@ def _near_border(gray: np.ndarray, border_px: int = 12) -> bool:
 # -------- Features / Scoring --------
 
 def _extract_features(gray: np.ndarray) -> Tuple[np.ndarray, bool]:
-    """
-    Compute features; return (features, overlay_flag).
-    If overlay_flag is True, caller should force a very low score.
-    """
     if gray is None or gray.size == 0:
         return np.zeros(6, np.float32), False
 
@@ -114,7 +106,6 @@ def _extract_features(gray: np.ndarray) -> Tuple[np.ndarray, bool]:
 
     feats = np.array([mean, std, edge_var, hi, lo, entropy], dtype=np.float32)
 
-    # If it looks like overlay or edge-only, tag it
     if overlay or edge_art or _near_border(gray):
         return feats, True
     return feats, False
@@ -150,7 +141,6 @@ def classify_crop_batch(crop_paths: List[str]) -> List[Dict[str, float]]:
                 out.append({"label": "unknown", "score": 0.0})
                 continue
 
-            # Normalize size (keeps aspect, max side 256)
             h, ww = im.shape[:2]
             if max(h, ww) > 256:
                 sc = 256.0 / max(h, ww)
@@ -158,7 +148,6 @@ def classify_crop_batch(crop_paths: List[str]) -> List[Dict[str, float]]:
 
             feats, looks_like_overlay = _extract_features(im)
 
-            # Hard veto for overlays/edges/border hits
             if looks_like_overlay:
                 out.append({"label": "not_comet", "score": 0.01})
                 continue
