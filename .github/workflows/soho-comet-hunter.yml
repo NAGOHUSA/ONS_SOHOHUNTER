@@ -1,12 +1,13 @@
 name: SOHO Comet Hunt
-
 on:
   schedule:
-    - cron: "0 * * * *"   # hourly at :00 UTC
-  workflow_dispatch: {}    # allow manual runs
+    - cron: "0 * * * *" # hourly at :00 UTC
+  workflow_dispatch: {}
 
+# REQUIRED: contents:write + push:write for git push to work
 permissions:
   contents: write
+  push: write
 
 concurrency:
   group: soho-comet-hunt
@@ -15,10 +16,12 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }} # Ensures push works reliably
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,7 +40,7 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Ensure folders
+      - name: Ensure output directories
         run: |
           mkdir -p frames detections detections/reports
 
@@ -46,7 +49,7 @@ jobs:
           set -euo pipefail
           python detector/detect_comets.py --hours 6 --step-min 12 --out detections
           echo "detections/ tree:"
-          find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
+          find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/ - /'
 
       - name: Write candidates_latest.json (always)
         run: |
@@ -54,25 +57,34 @@ jobs:
           python - << 'PY'
 import json, glob
 from pathlib import Path
-det = Path("detections"); det.mkdir(exist_ok=True)
+
+det = Path("detections")
+det.mkdir(exist_ok=True)
 out = det / "candidates_latest.json"
+
+# Find latest candidates_*.json
 cands = sorted(glob.glob("detections/candidates_*.json"), reverse=True)
+
 if not cands:
     out.write_text("[]\n", encoding="utf-8")
 else:
-    data = json.load(open(cands[0], "r", encoding="utf-8"))
+    with open(cands[0], "r", encoding="utf-8") as f:
+        data = json.load(f)
+    # Handle both list and {"candidates": [...]} formats
     if isinstance(data, dict) and isinstance(data.get("candidates"), list):
         data = data["candidates"]
-    json.dump(data if isinstance(data, list) else [], open(out, "w", encoding="utf-8"), indent=2)
-    open(out, "a", encoding="utf-8").write("\n")
+    final_data = data if isinstance(data, list) else []
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(final_data, f, indent=2)
+        f.write("\n")
 print("Updated detections/candidates_latest.json")
 PY
 
-      - name: Commit outputs
+      - name: Commit outputs if changed
         id: commit
         run: |
           set -euo pipefail
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
@@ -84,7 +96,8 @@ PY
 
       - name: Push changes
         if: steps.commit.outputs.committed == 'true'
-        run: git push origin HEAD:main --force-with-lease
+        run: |
+          git push origin HEAD:main --force-with-lease
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
