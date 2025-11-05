@@ -1,114 +1,58 @@
 name: SOHO Comet Hunt
+
 on:
   schedule:
-    - cron: "0 * * * *" # hourly at :00 UTC
-  workflow_dispatch: {}
+    - cron: "0 * * * *"
+  workflow_dispatch:
 
-# REQUIRED: contents:write + push:write for git push to work
 permissions:
   contents: write
-  push: write
-
-concurrency:
-  group: soho-comet-hunt
-  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }} # Ensures push works reliably
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install opencv-python-headless numpy requests pillow \
+                      filterpy scipy imageio imageio-ffmpeg groq
 
-      - name: Ensure output directories
+      - name: Run live detection
+        env:
+          DETECTOR_DEBUG: "1"
+          INSTRUMENTS: "lasco,goes"
+          GROQ_API_KEY: ${{ secrets.GROQ_ONSSOHO }}
         run: |
-          mkdir -p frames detections detections/reports
-
-      - name: Detect comets (6h lookback, 12m step)
-        run: |
-          set -euo pipefail
           python detector/detect_comets.py --hours 6 --step-min 12 --out detections
-          echo "detections/ tree:"
-          find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/ - /'
+          echo "frames tree:"; find frames -maxdepth 3 -type f | head -20
+          echo "detections tree:"; find detections -type f
 
-      - name: Write candidates_latest.json (always)
+      - name: Commit new detections
         run: |
-          set -euo pipefail
-          python - << 'PY'
-import json, glob
-from pathlib import Path
-
-det = Path("detections")
-det.mkdir(exist_ok=True)
-out = det / "candidates_latest.json"
-
-# Find latest candidates_*.json
-cands = sorted(glob.glob("detections/candidates_*.json"), reverse=True)
-
-if not cands:
-    out.write_text("[]\n", encoding="utf-8")
-else:
-    with open(cands[0], "r", encoding="utf-8") as f:
-        data = json.load(f)
-    # Handle both list and {"candidates": [...]} formats
-    if isinstance(data, dict) and isinstance(data.get("candidates"), list):
-        data = data["candidates"]
-    final_data = data if isinstance(data, list) else []
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(final_data, f, indent=2)
-        f.write("\n")
-print("Updated detections/candidates_latest.json")
-PY
-
-      - name: Commit outputs if changed
-        id: commit
-        run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
             git commit -m "Auto: new detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
-            echo "committed=true" >> "$GITHUB_OUTPUT"
+            echo "committed=true" >> $GITHUB_OUTPUT
           else
-            echo "committed=false" >> "$GITHUB_OUTPUT"
+            echo "committed=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Push changes
         if: steps.commit.outputs.committed == 'true'
         run: |
           git push origin HEAD:main --force-with-lease
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: detections-${{ github.run_id }}
-          path: |
-            detections/latest_status.json
-            detections/candidates_latest.json
-            detections/candidates_*.json
-            detections/*.png
-            detections/reports/*.txt
-            detections/reports/*.csv
-          if-no-files-found: warn
-          retention-days: 7
