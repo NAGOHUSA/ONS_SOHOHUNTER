@@ -41,8 +41,6 @@ jobs:
         run: |
           mkdir -p frames detections detections/reports
 
-      # ---- RUN DETECTOR (kept your code flow) ----
-      # If your script is at repo root, change to: python detect_comets.py ...
       - name: Detect comets (6h lookback, 12m step)
         run: |
           set -euo pipefail
@@ -50,8 +48,7 @@ jobs:
           echo "detections/ tree:"
           find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
-      # ---- ALWAYS WRITE candidates_latest.json (even if empty) ----
-      - name: Write candidates_latest.json
+      - name: Write candidates_latest.json (always)
         run: |
           set -euo pipefail
           python - << 'PY'
@@ -71,7 +68,6 @@ else:
 print("Updated detections/candidates_latest.json")
 PY
 
-      # ---- COMMIT ONLY IF CHANGED (kept your commit msg) ----
       - name: Commit outputs
         id: commit
         run: |
@@ -86,13 +82,10 @@ PY
             echo "committed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ---- PUSH (kept your --force-with-lease) ----
       - name: Push changes
         if: steps.commit.outputs.committed == 'true'
-        run: |
-          git push origin HEAD:main --force-with-lease
+        run: git push origin HEAD:main --force-with-lease
 
-      # ---- ARTIFACTS (handy for debugging) ----
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
