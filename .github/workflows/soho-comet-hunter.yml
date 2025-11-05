@@ -39,6 +39,12 @@ jobs:
           python detector/detect_comets.py --hours 6 --step-min 12 --out detections
           echo "frames tree:"; find frames -maxdepth 3 -type f | head -20
           echo "detections tree:"; find detections -type f
+                - name: Ensure stable candidates_latest.json
+        run: |
+          python detector/ensure_candidates_latest.py
+
+      # ...then your existing 'git add/commit/push if changed' step
+
 
       - name: Commit new detections
         run: |
