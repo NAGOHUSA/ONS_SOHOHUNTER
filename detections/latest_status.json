@@ -1,18 +1,18 @@
 {
-  "timestamp_utc": "2025-11-01T01:14:00Z",
-  "instruments": [
-    "lasco",
-    "goes"
-  ],
-  "summary": "Analyzed 15 frames",
-  "per_source": {
-    "lasco": {
-      "frames": 15,
-      "time_range": "19:12\u201300:48 UTC"
-    },
-    "goes": {
-      "frames": 0,
-      "time_range": "none"
-    }
-  }
+  "name": "latest_status.json",
+  "generated_at": "2025-11-05T18:23:01Z",
+  "timestamp_utc": "2025-11-05T18:23:01Z",
+  "hours_back": 6,
+  "step_min": 12,
+  "c2_frames": 0,
+  "c3_frames": 0,
+  "c2_last_frame": "",
+  "c3_last_frame": "",
+  "time_range": {
+    "C2": "none \u2192 none",
+    "C3": "none \u2192 none"
+  },
+  "errors": [],
+  "auto_selected_count": 0,
+  "candidates": []
 }
