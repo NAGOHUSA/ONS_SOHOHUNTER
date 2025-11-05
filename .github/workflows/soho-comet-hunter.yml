@@ -1,20 +1,19 @@
-name: SOHO Comet Hunt
+name: SOHO Comet Hunter
 
 on:
   schedule:
-    - cron: "0 * * * *"       # hourly
-    - cron: "*/15 * * * *"    # every 15 minutes
-  workflow_dispatch:
+    - cron: "0 * * * *"   # every hour at :00
+  workflow_dispatch: {}    # allow manual runs
 
 permissions:
-  contents: write
+  contents: write          # needed to commit detections/
 
 concurrency:
-  group: soho-comet-hunt
+  group: soho-comet-hunter
   cancel-in-progress: false
 
 jobs:
-  run:
+  hunt:
     runs-on: ubuntu-latest
 
     steps:
@@ -38,74 +37,60 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Create output folders (idempotent)
+      - name: Ensure folders
         run: |
           mkdir -p frames detections detections/reports
 
-      # ---- RUN DETECTOR ----
-      - name: Detect comets (6h, 12m step)
-        env:
-          # tuneables (safe defaults)
-          HOURS_BACK: "6"
-          STEP_MIN: "12"
+      # ---- RUN DETECTOR (edit path if your script lives elsewhere) ----
+      - name: Detect comets (6h lookback, 12m step)
         run: |
-          set -e
-          python detector/detect_comets.py --hours "$HOURS_BACK" --step-min "$STEP_MIN" --out detections
-          echo "frames tree:"; find frames -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
-          echo "detections tree:"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
+          set -euo pipefail
+          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
+          echo "detections/ tree:"
+          find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
-      # ---- ALWAYS WRITE A STABLE POINTER ----
-      - name: Ensure candidates_latest.json exists
+      # ---- ALWAYS WRITE candidates_latest.json ----
+      - name: Write candidates_latest.json
         run: |
-          set -e
-          if [ -f detector/ensure_candidates_latest.py ]; then
-            python detector/ensure_candidates_latest.py
-          else
-            python - << 'PY'
-import json, glob, os, re
+          set -euo pipefail
+          python - << 'PY'
+import json, glob
 from pathlib import Path
-det = Path("detections")
-det.mkdir(exist_ok=True)
-cands = sorted(glob.glob("detections/candidates_*.json"), reverse=True)
+det = Path("detections"); det.mkdir(exist_ok=True)
 out = det / "candidates_latest.json"
+cands = sorted(glob.glob("detections/candidates_*.json"), reverse=True)
 if not cands:
     out.write_text("[]\n", encoding="utf-8")
 else:
-    import json
     data = json.load(open(cands[0], "r", encoding="utf-8"))
     if isinstance(data, dict) and isinstance(data.get("candidates"), list):
         data = data["candidates"]
     json.dump(data if isinstance(data, list) else [], open(out, "w", encoding="utf-8"), indent=2)
     open(out, "a", encoding="utf-8").write("\n")
-print("Wrote/updated detections/candidates_latest.json")
+print("Updated detections/candidates_latest.json")
 PY
-          fi
-          echo "detections tree (post-pointer):"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
-      # ---- COMMIT ONLY IF CHANGED ----
+      # ---- COMMIT IF CHANGED ----
       - name: Commit outputs
-        id: commit_outputs
+        id: commit
         run: |
-          set -e
+          set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
-            git commit -m "chore(detections): update outputs [skip ci]"
+            git commit -m "chore: update detections [skip ci]"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No changes in detections/"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Push changes
-        if: steps.commit_outputs.outputs.changed == 'true'
-        run: |
-          git push
+      - name: Push
+        if: steps.commit.outputs.changed == 'true'
+        run: git push
 
-      # ---- ARTIFACTS FOR DEBUGGING ----
-      - name: Upload artifacts (always)
+      # ---- ARTIFACTS (handy for debugging) ----
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: detections-${{ github.run_id }}
@@ -113,8 +98,6 @@ PY
             detections/latest_status.json
             detections/candidates_latest.json
             detections/candidates_*.json
-            detections/reports/*.csv
-            detections/reports/*.txt
             detections/*.png
           if-no-files-found: warn
           retention-days: 7
