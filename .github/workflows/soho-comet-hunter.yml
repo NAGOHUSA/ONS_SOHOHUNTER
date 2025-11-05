@@ -1,5 +1,4 @@
 name: SOHO Comet Hunt
-
 on:
   schedule:
     - cron: "0 * * * *"
@@ -11,7 +10,8 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-
+    outputs:
+      committed: ${{ steps.commit.outputs.committed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,16 +40,43 @@ jobs:
           echo "frames tree:"; find frames -maxdepth 3 -type f | head -20
           echo "detections tree:"; find detections -type f
 
-      - name: Commit new detections
+      # --------------------------------------------------------------
+      # NEW STEP: guarantee a JSON file (empty if no detections)
+      # --------------------------------------------------------------
+      - name: Ensure JSON output exists
+        id: ensure_json
+        run: |
+          mkdir -p detections
+          JSON_FILE="detections/run_$(date -u +'%Y%m%dT%H%M%SZ').json"
+          if [ -z "$(find detections -name '*.json' -type f)" ]; then
+            # No JSON at all → create an empty array
+            echo "[]" > "$JSON_FILE"
+          else
+            # At least one JSON exists → rename the latest to a timestamped name
+            LATEST=$(ls -t detections/*.json 2>/dev/null | head -n1)
+            if [ -n "$LATEST" ]; then
+              mv "$LATEST" "$JSON_FILE"
+            fi
+          fi
+          echo "json_path=$JSON_FILE" >> $GITHUB_OUTPUT
+          echo "Created/renamed JSON: $JSON_FILE"
+
+      - name: Commit new detections (including guaranteed JSON)
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -n "$(git status --porcelain detections)" ]; then
-            git add detections
-            git commit -m "Auto: new detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
+
+          # Always stage the (possibly empty) JSON we just created
+          git add detections
+
+          if git diff --cached --quiet; then
+            # Nothing changed except the forced JSON → still commit
+            git commit -m "Auto: detections + AI labels (none) [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
             echo "committed=true" >> $GITHUB_OUTPUT
           else
-            echo "committed=false" >> $GITHUB_OUTPUT
+            git commit -m "Auto: new detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
+            echo "committed=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Push changes
