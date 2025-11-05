@@ -2,11 +2,16 @@ name: SOHO Comet Hunt
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 * * * *"       # hourly
+    - cron: "*/15 * * * *"    # every 15 minutes
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: soho-comet-hunt
+  cancel-in-progress: false
 
 jobs:
   run:
@@ -15,50 +20,101 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install opencv-python-headless numpy requests pillow \
-                      filterpy scipy imageio imageio-ffmpeg groq
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Run live detection
+      - name: Create output folders (idempotent)
+        run: |
+          mkdir -p frames detections detections/reports
+
+      # ---- RUN DETECTOR ----
+      - name: Detect comets (6h, 12m step)
         env:
-          DETECTOR_DEBUG: "1"
-          INSTRUMENTS: "lasco,goes"
-          GROQ_API_KEY: ${{ secrets.GROQ_ONSSOHO }}
+          # tuneables (safe defaults)
+          HOURS_BACK: "6"
+          STEP_MIN: "12"
         run: |
-          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
-          echo "frames tree:"; find frames -maxdepth 3 -type f | head -20
-          echo "detections tree:"; find detections -type f
-                - name: Ensure stable candidates_latest.json
+          set -e
+          python detector/detect_comets.py --hours "$HOURS_BACK" --step-min "$STEP_MIN" --out detections
+          echo "frames tree:"; find frames -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
+          echo "detections tree:"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
+
+      # ---- ALWAYS WRITE A STABLE POINTER ----
+      - name: Ensure candidates_latest.json exists
         run: |
-          python detector/ensure_candidates_latest.py
+          set -e
+          if [ -f detector/ensure_candidates_latest.py ]; then
+            python detector/ensure_candidates_latest.py
+          else
+            python - << 'PY'
+import json, glob, os, re
+from pathlib import Path
+det = Path("detections")
+det.mkdir(exist_ok=True)
+cands = sorted(glob.glob("detections/candidates_*.json"), reverse=True)
+out = det / "candidates_latest.json"
+if not cands:
+    out.write_text("[]\n", encoding="utf-8")
+else:
+    import json
+    data = json.load(open(cands[0], "r", encoding="utf-8"))
+    if isinstance(data, dict) and isinstance(data.get("candidates"), list):
+        data = data["candidates"]
+    json.dump(data if isinstance(data, list) else [], open(out, "w", encoding="utf-8"), indent=2)
+    open(out, "a", encoding="utf-8").write("\n")
+print("Wrote/updated detections/candidates_latest.json")
+PY
+          fi
+          echo "detections tree (post-pointer):"; find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
-      # ...then your existing 'git add/commit/push if changed' step
-
-
-      - name: Commit new detections
+      # ---- COMMIT ONLY IF CHANGED ----
+      - name: Commit outputs
+        id: commit_outputs
         run: |
-          git config user.name "github-actions[bot]"
+          set -e
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
-            git commit -m "Auto: new detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
-            echo "committed=true" >> $GITHUB_OUTPUT
+            git commit -m "chore(detections): update outputs [skip ci]"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "committed=false" >> $GITHUB_OUTPUT
+            echo "No changes in detections/"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Push changes
-        if: steps.commit.outputs.committed == 'true'
+        if: steps.commit_outputs.outputs.changed == 'true'
         run: |
-          git push origin HEAD:main --force-with-lease
+          git push
+
+      # ---- ARTIFACTS FOR DEBUGGING ----
+      - name: Upload artifacts (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: detections-${{ github.run_id }}
+          path: |
+            detections/latest_status.json
+            detections/candidates_latest.json
+            detections/candidates_*.json
+            detections/reports/*.csv
+            detections/reports/*.txt
+            detections/*.png
+          if-no-files-found: warn
+          retention-days: 7
