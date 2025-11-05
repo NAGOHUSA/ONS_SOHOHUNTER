@@ -2,8 +2,8 @@ name: SOHO Comet Hunter
 
 on:
   schedule:
-    - cron: "0 * * * *"   # hourly on the hour
-  workflow_dispatch: {}    # allow manual runs
+    - cron: "0 * * * *"   # every hour at :00 UTC
+  workflow_dispatch: {}    # allow manual runs from the Actions tab
 
 permissions:
   contents: write          # needed to commit detections/
@@ -42,7 +42,7 @@ jobs:
           mkdir -p frames detections detections/reports
 
       # ---- RUN DETECTOR ----
-      # If your script is at the repo root, change to: python detect_comets.py ...
+      # If your script lives at repo root, change to: python detect_comets.py ...
       - name: Detect comets (6h lookback, 12m step)
         run: |
           set -euo pipefail
@@ -50,7 +50,7 @@ jobs:
           echo "detections/ tree:"
           find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
 
-      # ---- ALWAYS WRITE candidates_latest.json ----
+      # ---- ALWAYS WRITE candidates_latest.json (even if empty) ----
       - name: Write candidates_latest.json
         run: |
           set -euo pipefail
