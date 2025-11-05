@@ -1,16 +1,16 @@
 {
   "name": "latest_status.json",
-  "generated_at": "2025-11-05T19:15:25Z",
-  "timestamp_utc": "2025-11-05T19:15:25Z",
+  "generated_at": "2025-11-05T20:19:24Z",
+  "timestamp_utc": "2025-11-05T20:19:24Z",
   "hours_back": 6,
   "step_min": 12,
-  "c2_frames": 1,
-  "c3_frames": 1,
-  "c2_last_frame": "C2_20251105_1336.jpg",
-  "c3_last_frame": "C3_20251105_1342.jpg",
+  "c2_frames": 0,
+  "c3_frames": 0,
+  "c2_last_frame": "",
+  "c3_last_frame": "",
   "time_range": {
-    "C2": "2025-11-05T13:36:00Z \u2192 2025-11-05T13:36:00Z",
-    "C3": "2025-11-05T13:42:00Z \u2192 2025-11-05T13:42:00Z"
+    "C2": "none \u2192 none",
+    "C3": "none \u2192 none"
   },
   "errors": [],
   "auto_selected_count": 0,
