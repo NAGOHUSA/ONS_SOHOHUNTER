@@ -1,19 +1,19 @@
-name: SOHO Comet Hunter
+name: SOHO Comet Hunt
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour at :00 UTC
-  workflow_dispatch: {}    # allow manual runs from the Actions tab
+    - cron: "0 * * * *"   # hourly at :00 UTC
+  workflow_dispatch: {}    # allow manual runs
 
 permissions:
-  contents: write          # needed to commit detections/
+  contents: write
 
 concurrency:
-  group: soho-comet-hunter
+  group: soho-comet-hunt
   cancel-in-progress: false
 
 jobs:
-  hunt:
+  run:
     runs-on: ubuntu-latest
 
     steps:
@@ -41,8 +41,8 @@ jobs:
         run: |
           mkdir -p frames detections detections/reports
 
-      # ---- RUN DETECTOR ----
-      # If your script lives at repo root, change to: python detect_comets.py ...
+      # ---- RUN DETECTOR (kept your code flow) ----
+      # If your script is at repo root, change to: python detect_comets.py ...
       - name: Detect comets (6h lookback, 12m step)
         run: |
           set -euo pipefail
@@ -71,7 +71,7 @@ else:
 print("Updated detections/candidates_latest.json")
 PY
 
-      # ---- COMMIT IF CHANGED ----
+      # ---- COMMIT ONLY IF CHANGED (kept your commit msg) ----
       - name: Commit outputs
         id: commit
         run: |
@@ -80,15 +80,17 @@ PY
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
-            git commit -m "chore: update detections [skip ci]"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git commit -m "Auto: new detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
+            echo "committed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Push
-        if: steps.commit.outputs.changed == 'true'
-        run: git push
+      # ---- PUSH (kept your --force-with-lease) ----
+      - name: Push changes
+        if: steps.commit.outputs.committed == 'true'
+        run: |
+          git push origin HEAD:main --force-with-lease
 
       # ---- ARTIFACTS (handy for debugging) ----
       - name: Upload artifacts
