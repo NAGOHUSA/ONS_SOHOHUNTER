@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-SOHO Comet Detection Pipeline (LATEST-driven)
-- Parses NASA LATEST pages for LASCO C2/C3 (freshest frames)
-- Downloads frames for the past --hours in --step-min cadence
-- Simple tracker + local AI classifier (ai_classifier.py)
-- Optional Groq vision on the top-scoring crops (rate-limited)
-- Always writes:
-    detections/latest_status.json   <-- includes embedded "candidates": [...]
+SOHO Comet Detection Pipeline (LATEST-driven, no extra heavy deps)
+
+- Parses NASA LATEST pages for LASCO C2/C3
+- Downloads frames for the last --hours in --step-min cadence
+- Simple centroid-based motion tracker (no SciPy/FilterPy)
+- Optional local AI crop classification via ai_classifier.py
+- Writes:
+    detections/latest_status.json   # includes "candidates": [...]
     detections/latest_run.json
-- Optionally writes (when any found):
-    detections/candidates_YYYYMMDD_HHMMSS.json
-- Also writes thumbnails of the last C2/C3 frame:
     detections/lastthumb_C2.png
     detections/lastthumb_C3.png
+- When any found:
+    detections/candidates_YYYYMMDD_HHMMSS.json
 """
 
-import argparse, os, re, json, base64, tempfile
+from __future__ import annotations
+import os, re, io, json, argparse, base64
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
@@ -23,43 +25,49 @@ import cv2
 import numpy as np
 import requests
 
-# -------- CLI / ENV --------
+# ------------------------------------------------------------------------------------
+# CLI / ENV
+# ------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
 parser.add_argument("--hours", type=int, default=int(os.getenv("HOURS", "6")))
 parser.add_argument("--step-min", type=int, default=int(os.getenv("STEP_MIN", "12")))
 parser.add_argument("--out", default=os.getenv("OUT", "detections"))
 args = parser.parse_args()
 
-HOURS = args.hours
-STEP_MIN = args.step_min
-OUT_DIR = Path(args.out)
-FRAMES_DIR = Path("frames")
+HOURS       = args.hours
+STEP_MIN    = args.step_min
+OUT_DIR     = Path(args.out)
+FRAMES_DIR  = Path("frames")
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_LIMIT_HOURS = 12
-GROQ_MAX_CALLS = 2
-LAST_CALL_FILE = OUT_DIR / "last_groq_call.txt"
+DETECTOR_DEBUG   = os.getenv("DETECTOR_DEBUG", "0") == "1"
+GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
 
-# -------- LATEST page sources (more up-to-date than REPROCESSING) --------
+# NASA LATEST pages (most up-to-date)
 LATEST_PAGES = {
     "C2": "https://soho.nascom.nasa.gov/data/LATEST/latest-lascoC2.html",
     "C3": "https://soho.nascom.nasa.gov/data/LATEST/latest-lascoC3.html",
 }
-# Typical img href on those pages includes *_c2_1024.jpg or *_c3_1024.jpg
+
 IMG_HREF_RE = re.compile(r'href="([^"]*_(c2|c3)_1024\.jpg)"', re.IGNORECASE)
-STAMP_RE = re.compile(r"/(\d{8})_(\d{4})_c[23]_1024\.jpg$", re.IGNORECASE)
+STAMP_RE    = re.compile(r"/(\d{8})_(\d{4})_c[23]_1024\.jpg$", re.IGNORECASE)
 
-def log(*a): print(*a)
+def log(*a): 
+    print(*a, flush=True)
 
-# -------- ai classifier (local) --------
+# ------------------------------------------------------------------------------------
+# Optional local AI classifier
+# ------------------------------------------------------------------------------------
 try:
-    from ai_classifier import classify_crop_batch
+    from ai_classifier import classify_crop_batch  # returns [{"label": "...", "score": 0.0}, ...]
 except Exception as e:
-    log("ai_classifier import failed; using dummy:", e)
+    log("[ai] Could not import ai_classifier.classify_crop_batch — falling back. Reason:", e)
     def classify_crop_batch(paths):
-        return [{"label": "not_comet", "score": 0.0} for _ in paths]
+        # Neutral defaults
+        return [{"label": "unknown", "score": 0.0} for _ in paths]
 
-# -------- utilities --------
+# ------------------------------------------------------------------------------------
+# Utilities
+# ------------------------------------------------------------------------------------
 def ensure_dirs():
     FRAMES_DIR.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -69,7 +77,7 @@ def fetch_latest_list(instr: str):
     """Return list of (absolute_jpg_url, ymd, hm, iso) for instrument."""
     url = LATEST_PAGES[instr]
     try:
-        html = requests.get(url, timeout=15).text
+        html = requests.get(url, timeout=20).text
     except Exception as e:
         log(f"[{instr}] LATEST fetch failed:", e)
         return []
@@ -77,14 +85,12 @@ def fetch_latest_list(instr: str):
     items = []
     for m in IMG_HREF_RE.finditer(html):
         href = m.group(1)
-        # Make absolute if necessary
         if href.startswith("//"):
             jpg_url = "https:" + href
         elif href.startswith("http"):
             jpg_url = href
         else:
-            # the page tends to link relative to /data/
-            jpg_url = "https://soho.nascom.nasa.gov" + href if href.startswith("/") else "https://soho.nascom.nasa.gov/data/" + href
+            jpg_url = ("https://soho.nascom.nasa.gov" + href) if href.startswith("/") else ("https://soho.nascom.nasa.gov/data/" + href)
 
         sm = STAMP_RE.search(jpg_url)
         if not sm:
@@ -93,11 +99,12 @@ def fetch_latest_list(instr: str):
         iso = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:8]}T{hm[:2]}:{hm[2:]}:00Z"
         items.append((jpg_url, ymd, hm, iso))
 
-    # Unique + sorted by iso time ascending
+    # Unique & sorted
     seen = set()
     uniq = []
     for it in items:
-        if it[0] in seen: continue
+        if it[0] in seen: 
+            continue
         seen.add(it[0])
         uniq.append(it)
     uniq.sort(key=lambda x: x[3])
@@ -108,31 +115,32 @@ def within_window(iso_str: str, now_utc):
     return (now_utc - t) <= timedelta(hours=HOURS)
 
 def matches_step(prev_iso: str, cur_iso: str):
-    """Return True if cur is roughly STEP_MIN after prev (±2 min to be forgiving)."""
+    """Roughly STEP_MIN between frames (±2 min)."""
+    if not prev_iso: 
+        return True
     p = datetime.strptime(prev_iso, "%Y-%m-%dT%H:%M:%SZ")
     c = datetime.strptime(cur_iso, "%Y-%m-%dT%H:%M:%SZ")
-    delta = abs((c - p).total_seconds() / 60.0 - STEP_MIN)
-    return delta <= 2.0 or prev_iso == ""  # always allow first
+    delta_min = abs((c - p).total_seconds() / 60.0 - STEP_MIN)
+    return delta_min <= 2.0
 
 def download_frames_from_latest(instr: str):
-    """Download frames guided by LATEST page, honoring window + step cadence."""
+    """Download frames guided by LATEST page, honoring window + cadence."""
     now = datetime.utcnow().replace(tzinfo=timezone.utc)
     catalog = fetch_latest_list(instr)
-    kept = []
-    kept_iso = []
+    kept, kept_iso = [], []
     last_kept = ""
 
     for jpg_url, ymd, hm, iso in catalog:
         if not within_window(iso, now):
             continue
-        if last_kept and not matches_step(last_kept, iso):
+        if not matches_step(last_kept, iso):
             continue
 
         fname = f"{instr}_{ymd}_{hm}.jpg"
         out = FRAMES_DIR / fname
         if not out.exists():
             try:
-                r = requests.get(jpg_url, timeout=20)
+                r = requests.get(jpg_url, timeout=30)
                 if r.status_code == 200:
                     out.parent.mkdir(parents=True, exist_ok=True)
                     out.write_bytes(r.content)
@@ -148,172 +156,161 @@ def download_frames_from_latest(instr: str):
 
     return kept, kept_iso
 
-# -------- tracker (very light) --------
-from scipy.ndimage import gaussian_filter
-from filterpy.kalman import KalmanFilter
-
-def simple_track_detect(frame_paths, instr, ts_list):
-    if len(frame_paths) < 4: return []
-    pairs = sorted(zip(frame_paths, ts_list), key=lambda x: x[1])
-    cands, active, next_id = [], [], 0  # active: list of (kf, pos, age, tid)
-
-    for idx, (p, ts) in enumerate(pairs):
-        im = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
-        if im is None: continue
-
-        sm = gaussian_filter(im.astype(float)/255.0, sigma=1.0)*255
-        sm = np.clip(sm, 0, 255).astype(np.uint8)
-
-        _, thr = cv2.threshold(sm, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        contours, _ = cv2.findContours(thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # predict
-        new_active = []
-        for kf, pos, age, tid in active:
-            kf.predict()
-            pred = kf.x[:2, 0].astype(int)
-            if age > 3: continue
-            new_active.append((kf, tuple(pred), age+1, tid))
-        active = new_active
-
-        # measurements
-        meas = []
-        for c in contours:
+# ------------------------------------------------------------------------------------
+# Simple tracker (centroid association)
+# ------------------------------------------------------------------------------------
+def detect_points(gray: np.ndarray) -> list[tuple[int,int]]:
+    """Return list of bright centroids."""
+    # denoise & enhance
+    blur = cv2.GaussianBlur(gray, (0,0), 1.0)
+    # adaptive threshold: Otsu
+    _t, thr = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # keep small-ish blobs
+    contours, _ = cv2.findContours(thr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    pts = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if 5 <= area <= 400:   # heuristic for small moving points
             M = cv2.moments(c)
-            if M["m00"] > 10:
-                mx = int(M["m10"]/M["m00"]); my = int(M["m01"]/M["m00"])
-                meas.append((mx, my))
+            if M["m00"] > 0:
+                x = int(M["m10"]/M["m00"])
+                y = int(M["m01"]/M["m00"])
+                pts.append((x,y))
+    return pts
 
-        # associate nearest <= 80 px
-        used = set()
-        for i,(kf,pred,age,tid) in enumerate(active):
-            best, bi = None, -1
-            bestd = 1e9
-            for j,(mx,my) in enumerate(meas):
-                if j in used: continue
-                d = (mx-pred[0])**2+(my-pred[1])**2
-                if d < bestd: bestd, best, bi = d, (mx,my), j
-            if best and bestd < 80**2:
-                kf.update(np.array(best).reshape(2,1))
-                active[i] = (kf, best, 0, tid)
-                used.add(bi)
+def link_tracks(frames: list[str], times: list[str], max_dist: float = 80.0, min_len: int = 4):
+    """
+    Naive nearest-neighbor track linker across frames.
+    Returns list of tracks: dict(id, positions=[{x,y,timestamp}])
+    """
+    tracks = []  # list of dict: {"id": int, "positions": [{"x":..,"y":..,"timestamp":..}, ...]}
+    last_positions = {}  # track_id -> (x,y)
 
-        # spawn
-        for (mx,my) in meas:
-            if any(px==mx and py==my for _,(px,py),_,_ in active): continue
-            kf = KalmanFilter(dim_x=4, dim_z=2)
-            kf.x[:2] = np.array([mx,my]).reshape(2,1)
-            kf.F = np.array([[1,0,1,0],[0,1,0,1],[0,0,1,0],[0,0,0,1]])
-            kf.H = np.array([[1,0,0,0],[0,1,0,0]])
-            kf.P *= 100; kf.R *= 8; kf.Q = np.eye(4)*0.15
-            active.append((kf,(mx,my),0,next_id)); next_id += 1
+    next_id = 0
+    for i,(fpath, ts) in enumerate(sorted(zip(frames, times), key=lambda p: p[1])):
+        im = cv2.imread(fpath, cv2.IMREAD_GRAYSCALE)
+        if im is None:
+            continue
+        pts = detect_points(im)
 
-        # mature tracks → crops
-        for kf,pos,age,tid in active:
-            if age==0 and len([t for _,t in pairs[:idx+1] if t<=ts])>=4:
-                h,w = sm.shape; x,y = pos
-                x0,y0 = max(0,x-32), max(0,y-32)
-                x1,y1 = min(w,x+32), min(h,y+32)
-                crop = sm[y0:y1, x0:x1]
-                if crop.size==0: continue
-                tmp = Path(tempfile.mktemp(suffix=".png"))
-                cv2.imwrite(str(tmp), crop)
-                cls = classify_crop_batch([str(tmp)])[0]
-                try: os.unlink(tmp)
-                except: pass
-                if cls.get("score",0.0) >= 0.5:
-                    crops_dir = OUT_DIR / "crops"; crops_dir.mkdir(parents=True, exist_ok=True)
-                    cname = f"{instr}_track{tid}_{ts.replace(':','')}.png"
-                    cpath = crops_dir / cname
-                    cv2.imwrite(str(cpath), crop)
-                    cands.append({
-                        "instrument": f"LASCO {instr}",
-                        "timestamp": ts,
-                        "track_id": tid,
-                        "bbox": [int(x-32), int(y-32), 64, 64],
-                        "crop_path": f"crops/{cname}",
-                        "ai_label": cls.get("label","unknown"),
-                        "ai_score": float(round(cls.get("score",0.0),3)),
-                        "pos": {"x": int(x), "y": int(y)},
-                        # placeholders for UI toggles (can wire later)
-                        "original_mid_path": None,
-                        "annotated_mid_path": None
-                    })
-    return cands
+        # Try to match pts to existing tracks by nearest neighbor
+        assigned = set()
+        for tid, (lx,ly) in list(last_positions.items()):
+            best_j, best_d2 = -1, 1e18
+            for j,(x,y) in enumerate(pts):
+                if j in assigned: 
+                    continue
+                d2 = (x-lx)*(x-lx) + (y-ly)*(y-ly)
+                if d2 < best_d2:
+                    best_d2, best_j = d2, j
+            if best_j >= 0 and best_d2 <= max_dist*max_dist:
+                # append to that track
+                for tr in tracks:
+                    if tr["id"] == tid:
+                        tr["positions"].append({"x": int(pts[best_j][0]), "y": int(pts[best_j][1]), "timestamp": ts})
+                        last_positions[tid] = pts[best_j]
+                        assigned.add(best_j)
+                        break
+            else:
+                # If no match, drop from last_positions (track might have ended)
+                last_positions.pop(tid, None)
 
-# -------- optional Groq vision (rate-limited) --------
-def groq_refine(candidates):
-    if not GROQ_API_KEY or not candidates:
+        # Spawn new tracks for unassigned pts
+        for j,(x,y) in enumerate(pts):
+            if j in assigned:
+                continue
+            tr = {"id": next_id, "positions": [{"x": int(x), "y": int(y), "timestamp": ts}]}
+            tracks.append(tr)
+            last_positions[next_id] = (x,y)
+            next_id += 1
+
+    # Keep only tracks with length >= min_len
+    long_tracks = [t for t in tracks if len(t["positions"]) >= min_len]
+    return long_tracks
+
+def make_crop(im_gray: np.ndarray, x: int, y: int, size: int = 64) -> np.ndarray:
+    h,w = im_gray.shape
+    r = size // 2
+    x0, y0 = max(0, x - r), max(0, y - r)
+    x1, y1 = min(w, x + r), min(h, y + r)
+    crop = im_gray[y0:y1, x0:x1]
+    if crop.size == 0:
+        return None
+    # pad to exact size for consistency
+    pad = cv2.copyMakeBorder(crop, 
+                             top = 0, 
+                             bottom = size - crop.shape[0], 
+                             left = 0, 
+                             right = size - crop.shape[1],
+                             borderType = cv2.BORDER_CONSTANT, value = 0)
+    return pad
+
+def build_candidates(instr: str, frames: list[str], times: list[str], tracks: list[dict]):
+    """Produce candidate dicts with crops and AI scores."""
+    candidates = []
+    if not tracks:
         return candidates
 
-    # rate-limit window
-    try:
-        if LAST_CALL_FILE.exists():
-            last = datetime.fromtimestamp(float(LAST_CALL_FILE.read_text().strip()))
-            if datetime.utcnow() - last < timedelta(hours=GROQ_LIMIT_HOURS):
-                log("Groq rate-limit active — skipping")
-                return candidates
-    except Exception:
-        pass
+    # Index frames by timestamp for quick access
+    frame_by_ts = {ts: fp for fp, ts in sorted(zip(frames, times), key=lambda p: p[1])}
 
-    try:
-        from groq import Groq
-        client = Groq(api_key=GROQ_API_KEY)
-    except Exception as e:
-        log("Groq SDK not available:", e)
-        return candidates
+    for tr in tracks:
+        # use the last observation for crop
+        pos_last = tr["positions"][-1]
+        ts = pos_last["timestamp"]
+        fp = frame_by_ts.get(ts)
+        if not fp:
+            continue
+        im = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
+        if im is None:
+            continue
+        crop = make_crop(im, pos_last["x"], pos_last["y"], 64)
+        if crop is None:
+            continue
 
-    # top-scoring crops
-    tops = sorted([c for c in candidates if c["ai_score"]>0.5],
-                  key=lambda x: x["ai_score"], reverse=True)[:GROQ_MAX_CALLS]
-    if not tops:
-        log("No high-score crops for Groq")
-        return candidates
+        # save crop
+        crops_dir = OUT_DIR / "crops"
+        crops_dir.mkdir(parents=True, exist_ok=True)
+        cname = f"{instr}_track{tr['id']}_{ts.replace(':','').replace('-','')}.png"
+        cpath = crops_dir / cname
+        cv2.imwrite(str(cpath), crop)
 
-    for c in tops:
-        p = OUT_DIR / c["crop_path"]
-        if not p.exists(): continue
-        b64 = base64.b64encode(p.read_bytes()).decode("ascii")
-        try:
-            resp = client.chat.completions.create(
-                messages=[{
-                    "role":"user",
-                    "content":[
-                        {"type":"text","text":"Is this SOHO LASCO crop a comet? Reply as:\nlabel: comet/not_comet\nscore: 0-1\nreason: short."},
-                        {"type":"image_url","image_url":{"url": f"data:image/png;base64,{b64}"}}
-                    ]
-                }],
-                model="llama-3.2-90b-vision-preview"
-            )
-            txt = resp.choices[0].message.content.lower()
-            label = "comet" if "comet" in txt else "not_comet"
-            # try to parse a numeric score
-            score = 0.0
-            if "score:" in txt:
-                try: score = float(txt.split("score:")[1].split()[0])
-                except: pass
-            c["groq_label"] = label
-            c["groq_score"] = float(score)
-            c["groq_reason"] = txt.strip()[:300]
-        except Exception as e:
-            log("Groq error:", e)
+        # classify
+        res = classify_crop_batch([str(cpath)])[0] if callable(classify_crop_batch) else {"label":"unknown","score":0.0}
+        ai_label = str(res.get("label","unknown")).lower()
+        ai_score = float(res.get("score", 0.0))
 
-    try:
-        LAST_CALL_FILE.write_text(str(datetime.utcnow().timestamp()))
-    except Exception:
-        pass
+        cand = {
+            "instrument": f"LASCO {instr}",
+            "timestamp": ts,
+            "track_id": tr["id"],
+            "positions": tr["positions"],  # series for Sungrazer export
+            "bbox": [int(pos_last["x"] - 32), int(pos_last["y"] - 32), 64, 64],
+            "crop_path": f"crops/{cname}",
+            "ai_label": ai_label,
+            "ai_score": round(ai_score, 3),
+            # placeholders for UI toggle compatibility
+            "original_mid_path": None,
+            "annotated_mid_path": None
+        }
+        candidates.append(cand)
+
     return candidates
 
-# -------- status writers --------
+# ------------------------------------------------------------------------------------
+# Status writers
+# ------------------------------------------------------------------------------------
 def write_lastthumb(img_path: Path, out_png: Path):
     try:
         im = cv2.imread(str(img_path))
-        if im is None: return
+        if im is None:
+            return
         h,w = im.shape[:2]
-        sc = 320.0 / max(h,w)
-        imr = cv2.resize(im, (int(w*sc), int(h*sc)), interpolation=cv2.INTER_AREA)
+        scale = 320.0 / max(h,w)
+        imr = cv2.resize(im, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
         cv2.imwrite(str(out_png), imr)
-    except Exception: pass
+    except Exception as e:
+        log("[thumb]", e)
 
 def write_status_payload(c2_frames, c3_frames, c2_last, c3_last, c2_times, c3_times, candidates):
     ts_iso = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
@@ -333,8 +330,59 @@ def write_status_payload(c2_frames, c3_frames, c2_last, c3_last, c2_times, c3_ti
         },
         "errors": [],
         "auto_selected_count": len(candidates),
-        "candidates": candidates,  # <-- embed for the frontend
+        "candidates": candidates,
     }
     (OUT_DIR / "latest_status.json").write_text(json.dumps(payload, indent=2))
 
-def write_run_log(c2n, c3
+def write_run_log(c2n: int, c3n: int, candn: int):
+    ts_iso = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
+    (OUT_DIR / "latest_run.json").write_text(json.dumps({
+        "last_run_utc": ts_iso,
+        "frames_downloaded": {"C2": c2n, "C3": c3n},
+        "candidates_found": candn
+    }, indent=2))
+
+# ------------------------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------------------------
+def main():
+    log("=== DETECTION START ===")
+    ensure_dirs()
+
+    # Download from LATEST
+    c2_paths, c2_times = download_frames_from_latest("C2")
+    c3_paths, c3_times = download_frames_from_latest("C3")
+    c2_cnt, c3_cnt = len(c2_paths), len(c3_paths)
+
+    if DETECTOR_DEBUG:
+        log(f"[DEBUG] C2 frames: {c2_cnt}, C3 frames: {c3_cnt}")
+
+    # Track & classify
+    c2_tracks = link_tracks(c2_paths, c2_times, max_dist=80.0, min_len=4)
+    c3_tracks = link_tracks(c3_paths, c3_times, max_dist=80.0, min_len=4)
+
+    c2_cands = build_candidates("C2", c2_paths, c2_times, c2_tracks)
+    c3_cands = build_candidates("C3", c3_paths, c3_times, c3_tracks)
+    candidates = c2_cands + c3_cands
+
+    # Save timestamped candidates if any
+    if candidates:
+        ts_str = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        (OUT_DIR / f"candidates_{ts_str}.json").write_text(json.dumps(candidates, indent=2))
+        log(f"Saved {len(candidates)} candidates → detections/candidates_{ts_str}.json")
+
+    # Write last thumbnails
+    c2_last = c2_paths[-1] if c2_paths else ""
+    c3_last = c3_paths[-1] if c3_paths else ""
+    if c2_last: write_lastthumb(Path(c2_last), OUT_DIR / "lastthumb_C2.png")
+    if c3_last: write_lastthumb(Path(c3_last), OUT_DIR / "lastthumb_C3.png")
+
+    # Status + run log
+    write_status_payload(c2_paths, c3_paths, c2_last, c3_last, c2_times, c3_times, candidates)
+    write_run_log(c2_cnt, c3_cnt, len(candidates))
+
+    tracks = len({c["track_id"] for c in candidates})
+    log(f"=== DONE ===  C2:{c2_cnt}  C3:{c3_cnt}  Candidates:{len(candidates)}  Tracks:{tracks}")
+
+if __name__ == "__main__":
+    main()
