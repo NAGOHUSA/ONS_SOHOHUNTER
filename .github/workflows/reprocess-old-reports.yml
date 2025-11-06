@@ -3,7 +3,7 @@ name: Reprocess Old Reports (AI labels)
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "10 3 * * 0"
+    - cron: "10 3 * * 0"   # weekly Sunday 03:10 UTC
 
 jobs:
   reprocess:
@@ -22,27 +22,40 @@ jobs:
 
       - name: Install requirements
         run: |
+          set -e
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install opencv-python-headless numpy pillow imageio requests
+          fi
 
-      - name: Reprocess old reports (add ai_label/ai_score)
+      - name: Run reprocess script
         env:
           PYTHONPATH: .
         run: |
           set -e
-          python detector/reprocess_old_reports.py
-          echo "---- git status after reprocess ----"
-          git status --porcelain
+          echo "=== Running reprocess_old_reports.py ==="
+          python detector/reprocess_old_reports.py || (echo "❌ Script failed" && exit 1)
+          echo "---- Git status after reprocess ----"
+          git status --porcelain || true
 
-      - name: Commit changes (if any)
+      - name: Commit JSON changes (if any)
         run: |
           set -e
-          if git diff --quiet -- detections/*.json; then
+          echo "=== Checking for updated JSON files ==="
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Add JSONs in detections folder
+          git add detections/*.json 2>/dev/null || true
+
+          # Check for staged changes
+          if git diff --cached --quiet; then
             echo "No JSON changes to commit."
-          else:
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add detections/*.json
+          else
+            echo "Changes detected — committing updates."
             git commit -m "chore(reprocess): backfill AI labels/scores into old reports"
             git push
+            echo "✅ Pushed updated JSON files."
           fi
