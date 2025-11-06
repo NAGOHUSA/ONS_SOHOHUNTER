@@ -1,9 +1,7 @@
 name: Reprocess Old Reports (AI labels)
 
 on:
-  # Manual button in Actions tab
   workflow_dispatch: {}
-  # Optional: run weekly to keep history fresh (Sundays 03:10 UTC)
   schedule:
     - cron: "10 3 * * 0"
 
@@ -11,7 +9,7 @@ jobs:
   reprocess:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # we will commit updated JSON files back
+      contents: write
 
     steps:
       - name: Checkout
@@ -28,9 +26,12 @@ jobs:
           pip install -r requirements.txt
 
       - name: Reprocess old reports (add ai_label/ai_score)
+        env:
+          # Ensure relative imports like "from ai_classifier import ..." work
+          PYTHONPATH: .
         run: |
           set -e
-          python reprocess_old_reports.py
+          python detector/reprocess_old_reports.py
           echo "---- git status after reprocess ----"
           git status --porcelain
 
