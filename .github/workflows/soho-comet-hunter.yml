@@ -1,11 +1,9 @@
-# .github/workflows/soho-comet-hunter.yml
-name: SOHO Comet Hunter
+name: SOHO Comet Hunter (detect)
 
 on:
   schedule:
-    # every 3 hours
-    - cron: "0 */3 * * *"
-  workflow_dispatch: {}   # allow manual runs from the Actions tab
+    - cron: "*/30 * * * *"   # every 30 minutes
+  workflow_dispatch: {}
 
 jobs:
   detect:
@@ -14,53 +12,38 @@ jobs:
       contents: write
 
     env:
-      # Optional toggles / secrets (safe if unset)
-      USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
-      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-      DETECTOR_DEBUG: "1"
+      AI_MIN_SCORE: "0.60"      # tighten if too many false positives
+      DETECTOR_DEBUG: "0"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install requirements
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run detector
         run: |
-          # Run from repo root; script imports modules in detector/ fine when invoked by path
-          python detector/detect_comets.py \
-            --hours 6 \
-            --step-min 12 \
-            --out detections
+          set -e
+          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
+          python detector/ensure_candidates_latest.py || true
 
-      - name: Upload frames (artifact for debugging)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: frames-${{ github.run_id }}
-          path: |
-            frames/**
-          if-no-files-found: ignore
-          retention-days: 2
-
-      - name: Commit detections (JSON/CSV/overlays/animations)
+      - name: Commit detections
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Only commit when something actually changed in detections/
-          if [ -n "$(git status --porcelain detections)" ]; then
-            git add detections
-            git commit -m "SOHO Hunter update: $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add detections
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
           else
-            echo "No new detections to commit."
+            git commit -m "chore(detections): update latest_status + candidates + assets"
+            git push
           fi
