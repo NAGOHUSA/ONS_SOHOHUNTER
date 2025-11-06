@@ -1,12 +1,14 @@
 # detector/detect_comets.py
 from __future__ import annotations
 import os, re, math, json, argparse, pathlib, shutil
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Tuple, Dict, Any, Optional
 
 import cv2, numpy as np
-from fetch_lasco import fetch_window                 # robust fetcher (LATEST → dir → GIF)
-from ai_classifier import classify_crop_batch        # your trainable AI filter
+
+# Local modules in repo
+from fetch_lasco import fetch_window                 # pulls frames into frames/C2 and frames/C3
+from ai_classifier import classify_crop_batch        # returns [{"label":..., "score":...}, ...]
 
 # ----------------------------- Tunables / env -----------------------------
 OCCULTER_RADIUS_FRACTION = float(os.getenv("OCCULTER_RADIUS_FRACTION", "0.18"))
@@ -15,12 +17,11 @@ MAX_EDGE_RADIUS_FRACTION = float(os.getenv("MAX_EDGE_RADIUS_FRACTION", "0.98"))
 CROP_SIZE_C2 = int(os.getenv("CROP_SIZE_C2", "96"))
 CROP_SIZE_C3 = int(os.getenv("CROP_SIZE_C3", "128"))
 CROP_PAD     = int(os.getenv("CROP_PAD", "10"))     # extra pixels around bbox
-AI_MIN_SCORE = float(os.getenv("AI_MIN_SCORE", "0.55"))  # UI can filter; we still write all
-
+AI_MIN_SCORE = float(os.getenv("AI_MIN_SCORE", "0.55"))
 DEBUG_OVERLAYS = os.getenv("DETECTOR_DEBUG", "0") == "1"
 
 # ----------------------------- Helpers -----------------------------
-def ensure_dir(p: pathlib.Path): p.parent.mkdir(parents=True, exist_ok=True)
+def ensure_dir(p: pathlib.Path): p.mkdir(parents=True, exist_ok=True)
 
 def load_series(folder: pathlib.Path) -> List[Tuple[str, np.ndarray]]:
     pairs=[]
@@ -86,48 +87,66 @@ def link_tracks(points, min_len=3, max_jump=25):
             else: tracks.append([(t,x,y,a)])
     return [tr for tr in tracks if len(tr)>=min_len]
 
-def radial_guard_ok(x,y,w,h,rmin,rmax):
+def radial_guard_ok(x,y,w,h,rmin_frac,rmax_frac):
     cx,cy=w/2.0,h/2.0; r=math.hypot(x-cx,y-cy); rmax=min(cx,cy); frac=r/max(1e-6,rmax)
-    return (rmin<=frac<=rmax)
+    return (rmin_frac<=frac<=rmax_frac)
 
 def crop_for_track(det:str, aligned_names:List[str], aligned_imgs:List[np.ndarray], tr:List[Tuple[int,float,float,float]])->Dict[str,str]:
-    # mid index & bbox with padding
+    # mid frame + bbox
     mid_idx = len(aligned_imgs)//2
-    _, mid_img = aligned_names[mid_idx], aligned_imgs[mid_idx]
+    mid_name = aligned_names[mid_idx]
+    mid_img = aligned_imgs[mid_idx]
+
     xs=[x for (t,x,y,a) in tr]; ys=[y for (t,x,y,a) in tr]
     x0=int(max(0, min(xs) - CROP_PAD)); y0=int(max(0, min(ys) - CROP_PAD))
     x1=int(min(mid_img.shape[1]-1, max(xs) + CROP_PAD)); y1=int(min(mid_img.shape[0]-1, max(ys) + CROP_PAD))
+
     crop = mid_img[y0:y1+1, x0:x1+1].copy()
-    # normalize size by detector
     target = CROP_SIZE_C2 if det=="C2" else CROP_SIZE_C3
     if max(crop.shape[:2])>0 and max(crop.shape[:2])!=target:
         s = float(target)/float(max(crop.shape[:2]))
         crop = cv2.resize(crop, (int(crop.shape[1]*s), int(crop.shape[0]*s)), interpolation=cv2.INTER_AREA)
 
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    base=f"{det}_{ts}_trk"
+    # output dirs
     crops_dir = pathlib.Path("detections")/"crops"
     anno_dir  = pathlib.Path("detections")/"annotated"
-    crops_dir.mkdir(parents=True, exist_ok=True)
-    anno_dir.mkdir(parents=True, exist_ok=True)
+    orig_dir  = pathlib.Path("detections")/"originals"
+    for d in (crops_dir, anno_dir, orig_dir): ensure_dir(d)
 
+    # stable crop/anno names
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    base=f"{det}_{ts}_trk"
     crop_name = f"{base}.png"
-    crop_path = crops_dir/crop_name
-    cv2.imwrite(str(crop_path), crop)
+    anno_name = f"{base}_annotated.png"
 
-    # annotated (draw the trail on the mid image)
+    # write crop
+    cv2.imwrite(str(crops_dir/crop_name), crop)
+
+    # annotated image drawn on the mid aligned frame (for visualization)
     ann = cv2.cvtColor(mid_img, cv2.COLOR_GRAY2BGR)
     for (t,x,y,a) in tr:
         cv2.circle(ann, (int(x),int(y)), 2, (0,255,255), -1)
     cv2.rectangle(ann, (x0,y0), (x1,y1), (0,200,0), 1)
-    anno_name = f"{base}_annotated.png"
-    anno_path = anno_dir/anno_name
-    cv2.imwrite(str(anno_path), ann)
+    cv2.imwrite(str(anno_dir/anno_name), ann)
+
+    # Copy ORIGINAL mid-frame into detections/originals/ (fixes 404)
+    src = pathlib.Path("frames")/det/mid_name
+    dst = orig_dir/mid_name
+    try:
+        if src.exists():
+            if not dst.exists():
+                shutil.copyfile(src, dst)
+        else:
+            # fallback: write the aligned gray frame to keep link alive
+            cv2.imwrite(str(dst), mid_img)
+    except Exception as e:
+        print(f"[warn] could not place original mid-frame: {e}")
 
     return {
         "crop_rel": f"crops/{crop_name}",
         "anno_rel": f"annotated/{anno_name}",
-        "mid_rel":  aligned_names[mid_idx]
+        "orig_rel": f"originals/{mid_name}",
+        "mid_name": mid_name
     }
 
 # ----------------------------- Main -----------------------------
@@ -138,7 +157,7 @@ def main():
     ap.add_argument("--out",type=str,default="detections")
     args=ap.parse_args()
 
-    out_dir=pathlib.Path(args.out); out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir=pathlib.Path(args.out); ensure_dir(out_dir)
 
     print("=== DETECTION START ===")
     fetched = fetch_window(hours_back=args.hours, step_min=args.step_min, root="frames")
@@ -174,10 +193,8 @@ def main():
                               "last_frame_name":names[-1], "last_frame_iso":parse_frame_iso(names[-1]) or "",
                               "last_frame_size":[int(w),int(h)]}
 
-        # Build candidates + crops
         cands=[]
         crop_paths=[]
-        extras=[]
         for i,tr in enumerate(tracks, start=1):
             pos=[]
             for (t,x,y,a) in tr:
@@ -187,18 +204,16 @@ def main():
             paths = crop_for_track(det, names, images, tr)
             cands.append({
                 "detector": det,
-                "series_mid_frame": names[len(names)//2],
+                "series_mid_frame": paths["mid_name"],
                 "track_index": i,
                 "positions": pos,
                 "image_size": [int(w),int(h)],
                 "origin": "upper_left",
                 "crop_path": paths["crop_rel"],
                 "annotated_path": paths["anno_rel"],
-                "original_mid_path": paths["mid_rel"],
+                "original_mid_path": paths["orig_rel"],  # <-- frontend uses this for "Original"
             })
             crop_paths.append(str(pathlib.Path("detections")/paths["crop_rel"]))
-            extras.append(paths)
-
         # AI classify in batch
         if crop_paths:
             ai = classify_crop_batch(crop_paths)
@@ -210,7 +225,6 @@ def main():
     all_hits.extend(process("C2", series_c2))
     all_hits.extend(process("C3", series_c3))
 
-    # Summary + write files
     ts_iso=datetime.utcnow().isoformat(timespec="seconds")+"Z"
     summary={
         "timestamp_utc": ts_iso,
@@ -230,12 +244,11 @@ def main():
     if all_hits:
         ts_name=datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         with open(out_dir/f"candidates_{ts_name}.json","w",encoding="utf-8") as f: json.dump(all_hits, f, indent=2)
-        # Always refresh candidates_latest.json for the UI
         with open(out_dir/"candidates_latest.json","w",encoding="utf-8") as f: json.dump(all_hits, f, indent=2)
     else:
-        # ensure an empty file exists so UI can load "[]"
         (out_dir/"candidates_latest.json").write_text("[]\n", encoding="utf-8")
 
     print(f"=== DONE ===  Cands:{len(all_hits)}  AI-Comets≥{AI_MIN_SCORE}:{sum(1 for c in all_hits if c.get('ai_label')=='comet' and c.get('ai_score',0)>=AI_MIN_SCORE)}")
+
 if __name__=="__main__":
     main()
