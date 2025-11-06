@@ -1,0 +1,46 @@
+name: Train Classifier
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - detector/classifier/training_labels.csv
+      - detections/crops/**
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # we commit the updated model.npz back
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Train model
+        run: |
+          set -e
+          python detector/train_classifier.py
+          ls -l detector/classifier
+
+      - name: Commit model
+        run: |
+          set -e
+          if git diff --quiet -- detector/classifier/model.npz; then
+            echo "No model changes."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add detector/classifier/model.npz
+            git commit -m "chore(classifier): update model.npz from latest labels"
+            git push
+          fi
