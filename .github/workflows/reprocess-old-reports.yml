@@ -31,31 +31,120 @@ jobs:
           fi
 
       - name: Run reprocess script
+        id: run_script
         env:
           PYTHONPATH: .
         run: |
           set -e
           echo "=== Running reprocess_old_reports.py ==="
-          python detector/reprocess_old_reports.py || (echo "❌ Script failed" && exit 1)
+          python detector/reprocess_old_reports.py
           echo "---- Git status after reprocess ----"
           git status --porcelain || true
 
-      - name: Commit JSON changes (if any)
+      - name: Stage JSON changes
+        id: stage
         run: |
           set -e
-          echo "=== Checking for updated JSON files ==="
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Add JSONs in detections folder
+          # Stage JSONs under detections (quiet if none)
           git add detections/*.json 2>/dev/null || true
 
-          # Check for staged changes
+          # Detect if anything is staged
           if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No JSON changes to commit."
           else
-            echo "Changes detected — committing updates."
-            git commit -m "chore(reprocess): backfill AI labels/scores into old reports"
-            git push
-            echo "✅ Pushed updated JSON files."
+            # Count and list what changed
+            COUNT=$(git diff --cached --name-only | wc -l | tr -d ' ')
+            FILES=$(git diff --cached --name-only | tr '\n' ', ' | sed 's/, $//')
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+            echo "files=$FILES" >> "$GITHUB_OUTPUT"
+            echo "Changes detected: $COUNT file(s)"
           fi
+
+      - name: Commit & push (if changed)
+        if: steps.stage.outputs.changed == 'true'
+        id: commitpush
+        run: |
+          set -e
+          git commit -m "chore(reprocess): backfill AI labels/scores into old reports"
+          git push
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # --- Notification 1: Job summary (always writes a summary) ---
+      - name: Write run summary
+        run: |
+          {
+            echo "## Reprocess Old Reports — Summary"
+            echo ""
+            echo "**Run:** \`${{ github.workflow }} #${{ github.run_number }}\`"
+            echo ""
+            if [ "${{ steps.stage.outputs.changed }}" = "true" ]; then
+              echo "- **Status:** ✅ Updated JSON files"
+              echo "- **Count:** ${{ steps.stage.outputs.count }}"
+              echo "- **Files:** ${{ steps.stage.outputs.files }}"
+            else
+              echo "- **Status:** ℹ️ No JSON changes"
+            fi
+            echo ""
+            echo "- **Branch:** \`${{ github.ref_name }}\`"
+            echo "- **Actor:** \`${{ github.actor }}\`"
+            echo "- **Commit pushed:** \`${{ steps.commitpush.outputs.pushed || 'false' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --- Notification 2: Optional Webhook (Slack/Discord/etc) ---
+      # Set repository secret ALERT_WEBHOOK_URL to enable this
+      - name: Send webhook (if URL is set and changes occurred)
+        if: steps.stage.outputs.changed == 'true'
+        env:
+          WEBHOOK: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          set -e
+          if [ -z "$WEBHOOK" ]; then
+            echo "No ALERT_WEBHOOK_URL secret set — skipping webhook."
+            exit 0
+          fi
+
+          # Craft a compact JSON payload (works for Slack/Discord/Teams with minor mapping)
+          PAYLOAD=$(cat <<'JSON'
+          {
+            "text": "SOHO Hunter: Reprocessed old reports and updated JSON files."
+          }
+          JSON
+          )
+
+          # Try Slack-compatible and Discord-compatible formats
+          # Slack: expects {"text": "..."}
+          # Discord: content field; we’ll try Slack first, then Discord if non-2xx
+          echo "Sending webhook to $WEBHOOK"
+          STATUS=$(curl -s -o /tmp/w.out -w "%{http_code}" -X POST \
+                   -H "Content-Type: application/json" \
+                   --data "$PAYLOAD" "$WEBHOOK" || true)
+          if [ "$STATUS" -ge 200 ] && [ "$STATUS" -lt 300 ]; then
+            echo "Webhook delivered (Slack style)."
+            exit 0
+          fi
+
+          # Discord-style
+          DISCORD_PAYLOAD=$(cat <<JSON
+          {
+            "content": "SOHO Hunter: updated **${{ steps.stage.outputs.count }}** JSON file(s): ${{ steps.stage.outputs.files }}"
+          }
+          JSON
+          )
+          STATUS2=$(curl -s -o /tmp/w2.out -w "%{http_code}" -X POST \
+                   -H "Content-Type: application/json" \
+                   --data "$DISCORD_PAYLOAD" "$WEBHOOK" || true)
+          if [ "$STATUS2" -ge 200 ] && [ "$STATUS2" -lt 300 ]; then
+            echo "Webhook delivered (Discord style)."
+            exit 0
+          fi
+
+          echo "Webhook failed. First response code: $STATUS; Second: $STATUS2"
+          echo "Slack resp:"; cat /tmp/w.out || true
+          echo "Discord resp:"; cat /tmp/w2.out || true
+          # Do not fail the job on notification issues
+          exit 0
