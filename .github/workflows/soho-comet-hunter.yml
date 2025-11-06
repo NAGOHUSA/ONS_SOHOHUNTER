@@ -1,25 +1,29 @@
-name: SOHO Comet Hunt
+# .github/workflows/soho-comet-hunter.yml
+name: SOHO Comet Hunter
+
 on:
   schedule:
-    - cron: "0 * * * *"
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    # every 3 hours
+    - cron: "0 */3 * * *"
+  workflow_dispatch: {}   # allow manual runs from the Actions tab
 
 jobs:
-  run:
+  detect:
     runs-on: ubuntu-latest
-    outputs:
-      committed: ${{ steps.commit.outputs.committed }}
+    permissions:
+      contents: write
+
+    env:
+      # Optional toggles / secrets (safe if unset)
+      USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      DETECTOR_DEBUG: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
-      - name: Set up Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -27,59 +31,36 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install opencv-python-headless numpy requests pillow \
-                      filterpy scipy imageio imageio-ffmpeg groq
+          pip install -r requirements.txt
 
-      - name: Run live detection
-        env:
-          DETECTOR_DEBUG: "1"
-          INSTRUMENTS: "lasco,goes"
-          GROQ_API_KEY: ${{ secrets.GROQ_ONSSOHO }}
+      - name: Run detector
         run: |
-          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
-          echo "frames tree:"; find frames -maxdepth 3 -type f | head -20
-          echo "detections tree:"; find detections -type f
+          # Run from repo root; script imports modules in detector/ fine when invoked by path
+          python detector/detect_comets.py \
+            --hours 6 \
+            --step-min 12 \
+            --out detections
 
-      # --------------------------------------------------------------
-      # NEW STEP: guarantee a JSON file (empty if no detections)
-      # --------------------------------------------------------------
-      - name: Ensure JSON output exists
-        id: ensure_json
-        run: |
-          mkdir -p detections
-          JSON_FILE="detections/run_$(date -u +'%Y%m%dT%H%M%SZ').json"
-          if [ -z "$(find detections -name '*.json' -type f)" ]; then
-            # No JSON at all → create an empty array
-            echo "[]" > "$JSON_FILE"
-          else
-            # At least one JSON exists → rename the latest to a timestamped name
-            LATEST=$(ls -t detections/*.json 2>/dev/null | head -n1)
-            if [ -n "$LATEST" ]; then
-              mv "$LATEST" "$JSON_FILE"
-            fi
-          fi
-          echo "json_path=$JSON_FILE" >> $GITHUB_OUTPUT
-          echo "Created/renamed JSON: $JSON_FILE"
+      - name: Upload frames (artifact for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ github.run_id }}
+          path: |
+            frames/**
+          if-no-files-found: ignore
+          retention-days: 2
 
-      - name: Commit new detections (including guaranteed JSON)
-        id: commit
+      - name: Commit detections (JSON/CSV/overlays/animations)
         run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Always stage the (possibly empty) JSON we just created
-          git add detections
-
-          if git diff --cached --quiet; then
-            # Nothing changed except the forced JSON → still commit
-            git commit -m "Auto: detections + AI labels (none) [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
-            echo "committed=true" >> $GITHUB_OUTPUT
+          # Only commit when something actually changed in detections/
+          if [ -n "$(git status --porcelain detections)" ]; then
+            git add detections
+            git commit -m "SOHO Hunter update: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
           else
-            git commit -m "Auto: new detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
-            echo "committed=true" >> $GITHUB_OUTPUT
+            echo "No new detections to commit."
           fi
-
-      - name: Push changes
-        if: steps.commit.outputs.committed == 'true'
-        run: |
-          git push origin HEAD:main --force-with-lease
