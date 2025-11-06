@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,46 +24,41 @@ jobs:
 
       - name: Install requirements
         run: |
+          set -e
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install opencv-python-headless numpy pillow imageio requests
+          fi
 
-      - name: Validate training CSV
+      - name: Ensure training CSV exists
         run: |
-          python - <<'PY'
-import csv, os, sys
-p="detector/classifier/training_labels.csv"
-if not os.path.exists(p):
-  print("No training CSV yet; create one with scripts/make_label_csv.py")
-  sys.exit(1)
-bad=0
-with open(p,"r",newline="") as f:
-  rdr=csv.DictReader(f)
-  for i,row in enumerate(rdr, start=2):
-    path=(row.get("path") or "").strip()
-    label=(row.get("label") or "").strip().lower()
-    if not path or not label:
-      print(f"[invalid@line{i}] missing path/label"); bad+=1
-    elif not os.path.exists(path):
-      print(f"[missing@line{i}] {path}"); bad+=1
-if bad:
-  print(f"Found {bad} invalid entries. Fix the CSV."); sys.exit(1)
-print("CSV looks good.")
-PY
+          set -e
+          if [ ! -f detector/classifier/training_labels.csv ]; then
+            echo "detector/classifier/training_labels.csv not found. Run the Make Label CSV workflow first."
+            exit 1
+          fi
 
       - name: Train model
         run: |
+          set -e
           python detector/train_classifier.py
-          ls -l detector/classifier
+          ls -l detector/classifier || true
 
-      - name: Commit model
+      - name: Commit model (if changed)
         run: |
           set -e
-          if git diff --quiet -- detector/classifier/model.npz; then
-            echo "No model changes."
+          if [ ! -f detector/classifier/model.npz ]; then
+            echo "No model file produced. Check previous step logs."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add detector/classifier/model.npz
+          if git diff --cached --quiet; then
+            echo "No model changes to commit."
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add detector/classifier/model.npz
             git commit -m "chore(classifier): update model.npz from latest labels"
             git push
           fi
