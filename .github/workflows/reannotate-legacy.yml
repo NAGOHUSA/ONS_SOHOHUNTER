@@ -1,0 +1,73 @@
+name: Reannotate Legacy Candidates
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_files:
+        description: "Newest N report files to process (0 = all)"
+        required: false
+        default: "20"
+      limit_per_file:
+        description: "Max candidates per file (blank = all)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run (don’t modify JSON)?"
+        required: false
+        default: "false"
+
+jobs:
+  reannotate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements
+        run: |
+          set -e
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install opencv-python-headless numpy pillow imageio requests
+          fi
+
+      - name: Reannotate legacy reports
+        id: run
+        env:
+          PYTHONPATH: .
+        run: |
+          set -e
+          MF="${{ github.event.inputs.max_files }}"
+          MF=${MF:-0}
+          LPF="${{ github.event.inputs.limit_per_file }}"
+          DRY="${{ github.event.inputs.dry_run }}"
+          ARGS=""
+          if [ "$MF" != "0" ] && [ -n "$MF" ]; then ARGS="$ARGS --max-files $MF"; fi
+          if [ -n "$LPF" ]; then ARGS="$ARGS --limit-per-file $LPF"; fi
+          if [ "$DRY" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          echo "Running: python detector/reannotate_legacy.py $ARGS"
+          python detector/reannotate_legacy.py $ARGS
+          echo "done=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit updated detections (if any)
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add detections
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore(reannotate): rebuild crops/annotations/animations for legacy reports"
+            git push
+          fi
