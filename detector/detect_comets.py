@@ -6,6 +6,12 @@ from typing import List, Tuple, Dict, Any, Optional
 
 import cv2, numpy as np
 
+# Optional GIF writer
+try:
+    import imageio
+except Exception:
+    imageio = None
+
 # Local modules in repo
 from fetch_lasco import fetch_window                 # pulls frames into frames/C2 and frames/C3
 from ai_classifier import classify_crop_batch        # returns [{"label":..., "score":...}, ...]
@@ -19,6 +25,9 @@ CROP_SIZE_C3 = int(os.getenv("CROP_SIZE_C3", "128"))
 CROP_PAD     = int(os.getenv("CROP_PAD", "10"))     # extra pixels around bbox
 AI_MIN_SCORE = float(os.getenv("AI_MIN_SCORE", "0.55"))
 DEBUG_OVERLAYS = os.getenv("DETECTOR_DEBUG", "0") == "1"
+
+GIF_FPS = int(os.getenv("CROP_GIF_FPS", "5"))
+MP4_FPS = int(os.getenv("CROP_MP4_FPS", "8"))
 
 # ----------------------------- Helpers -----------------------------
 def ensure_dir(p: pathlib.Path): p.mkdir(parents=True, exist_ok=True)
@@ -91,45 +100,119 @@ def radial_guard_ok(x,y,w,h,rmin_frac,rmax_frac):
     cx,cy=w/2.0,h/2.0; r=math.hypot(x-cx,y-cy); rmax=min(cx,cy); frac=r/max(1e-6,rmax)
     return (rmin_frac<=frac<=rmax_frac)
 
-def crop_for_track(det:str, aligned_names:List[str], aligned_imgs:List[np.ndarray], tr:List[Tuple[int,float,float,float]])->Dict[str,str]:
-    # mid frame + bbox
+def to_bgr(img_gray: np.ndarray) -> np.ndarray:
+    return cv2.cvtColor(img_gray, cv2.COLOR_GRAY2BGR)
+
+def write_gif(frames_gray: List[np.ndarray], out_path: pathlib.Path, fps:int=5):
+    if imageio is None:
+        return False
+    try:
+        imgs = [imageio.core.util.Array(cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)) for f in frames_gray]
+        imageio.mimsave(str(out_path), imgs, fps=fps, loop=0)
+        return True
+    except Exception as e:
+        print(f"[warn] GIF save failed: {e}")
+        return False
+
+def write_mp4(frames_gray: List[np.ndarray], out_path: pathlib.Path, fps:int=8):
+    try:
+        h, w = frames_gray[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        vw = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h), isColor=False)
+        for f in frames_gray:
+            vw.write(f)
+        vw.release()
+        return True
+    except Exception as e:
+        print(f"[warn] MP4 save failed: {e}")
+        return False
+
+def crop_for_track(
+    det:str,
+    aligned_names:List[str],
+    aligned_imgs:List[np.ndarray],
+    tr:List[Tuple[int,float,float,float]]
+)->Dict[str,str]:
+    """
+    Build a single crop box that contains the whole track; then
+    (1) save a mid-frame crop (gray)
+    (2) save an annotated crop (drawn ON the crop)
+    (3) save a GIF/MP4 timelapse of cropped frames
+    (4) ensure the ORIGINAL mid-frame file exists under detections/originals/
+    """
+    # Compute bbox covering the entire track
+    xs=[x for (t,x,y,a) in tr]; ys=[y for (t,x,y,a) in tr]
+    # Use the aligned mid-frame index consistently
     mid_idx = len(aligned_imgs)//2
     mid_name = aligned_names[mid_idx]
-    mid_img = aligned_imgs[mid_idx]
+    mid_img  = aligned_imgs[mid_idx]
 
-    xs=[x for (t,x,y,a) in tr]; ys=[y for (t,x,y,a) in tr]
+    # Track-wide bbox with padding
     x0=int(max(0, min(xs) - CROP_PAD)); y0=int(max(0, min(ys) - CROP_PAD))
     x1=int(min(mid_img.shape[1]-1, max(xs) + CROP_PAD)); y1=int(min(mid_img.shape[0]-1, max(ys) + CROP_PAD))
 
-    crop = mid_img[y0:y1+1, x0:x1+1].copy()
-    target = CROP_SIZE_C2 if det=="C2" else CROP_SIZE_C3
-    if max(crop.shape[:2])>0 and max(crop.shape[:2])!=target:
-        s = float(target)/float(max(crop.shape[:2]))
-        crop = cv2.resize(crop, (int(crop.shape[1]*s), int(crop.shape[0]*s)), interpolation=cv2.INTER_AREA)
-
-    # output dirs
+    # Select output dirs
     crops_dir = pathlib.Path("detections")/"crops"
     anno_dir  = pathlib.Path("detections")/"annotated"
     orig_dir  = pathlib.Path("detections")/"originals"
-    for d in (crops_dir, anno_dir, orig_dir): ensure_dir(d)
+    gifs_dir  = pathlib.Path("detections")/"gifs"
+    mp4_dir   = pathlib.Path("detections")/"mp4"
+    for d in (crops_dir, anno_dir, orig_dir, gifs_dir, mp4_dir): ensure_dir(d)
 
-    # stable crop/anno names
+    # Create a cropped sequence across ALL aligned frames using the SAME bbox
+    # (So the GIF/MP4 shows motion)
+    cropped_seq = []
+    for img in aligned_imgs:
+        crop = img[y0:y1+1, x0:x1+1].copy()
+        cropped_seq.append(crop)
+
+    # Normalize crop size per detector for the representative stills (do NOT resize the sequence to keep aspect stable)
+    rep_crop = cropped_seq[mid_idx].copy()
+    target = CROP_SIZE_C2 if det=="C2" else CROP_SIZE_C3
+    if max(rep_crop.shape[:2])>0 and max(rep_crop.shape[:2])!=target:
+        s = float(target)/float(max(rep_crop.shape[:2]))
+        rep_crop_resized = cv2.resize(rep_crop, (int(rep_crop.shape[1]*s), int(rep_crop.shape[0]*s)), interpolation=cv2.INTER_AREA)
+    else:
+        rep_crop_resized = rep_crop
+
+    # Build names
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     base=f"{det}_{ts}_trk"
     crop_name = f"{base}.png"
     anno_name = f"{base}_annotated.png"
+    gif_name  = f"{base}.gif"
+    mp4_name  = f"{base}.mp4"
 
-    # write crop
-    cv2.imwrite(str(crops_dir/crop_name), crop)
+    # (1) Save representative crop (gray)
+    cv2.imwrite(str(crops_dir/crop_name), rep_crop_resized)
 
-    # annotated image drawn on the mid aligned frame (for visualization)
-    ann = cv2.cvtColor(mid_img, cv2.COLOR_GRAY2BGR)
+    # (2) Save annotated crop: draw the per-frame positions re-mapped into crop coordinates ON THE CROP
+    ann_crop = to_bgr(rep_crop_resized)
+    # we need to map original (x,y) → crop coords, and if we resized, map scale too
+    s = 1.0
+    if rep_crop_resized.shape[:2] != rep_crop.shape[:2]:
+        s = float(rep_crop_resized.shape[1]) / float(rep_crop.shape[1])  # scale by width
+    # draw small trail using positions, mapped into crop space (use mid frame alignment for readability)
     for (t,x,y,a) in tr:
-        cv2.circle(ann, (int(x),int(y)), 2, (0,255,255), -1)
-    cv2.rectangle(ann, (x0,y0), (x1,y1), (0,200,0), 1)
-    cv2.imwrite(str(anno_dir/anno_name), ann)
+        # map to crop-local
+        x_local = (x - x0) * s
+        y_local = (y - y0) * s
+        cv2.circle(ann_crop, (int(round(x_local)), int(round(y_local))), 2, (0,255,255), -1)
+    # draw bbox outline (this is the crop boundary, so subtle)
+    cv2.rectangle(ann_crop, (1,1), (ann_crop.shape[1]-2, ann_crop.shape[0]-2), (0,200,0), 1)
+    cv2.imwrite(str(anno_dir/anno_name), ann_crop)
 
-    # Copy ORIGINAL mid-frame into detections/originals/ (fixes 404)
+    # (3) Save GIF/MP4 for the cropped sequence
+    # Make a normalized 8-bit sequence for writing
+    seq8 = [cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) for f in cropped_seq]
+    gif_ok = False
+    if imageio is not None and len(seq8) >= 2:
+        gif_ok = write_gif(seq8, gifs_dir/gif_name, fps=GIF_FPS)
+    mp4_ok = False
+    if len(seq8) >= 2:
+        mp4_ok = write_mp4(seq8, mp4_dir/mp4_name, fps=MP4_FPS)
+
+    # (4) Copy ORIGINAL mid-frame into detections/originals/ (fixes 404)
     src = pathlib.Path("frames")/det/mid_name
     dst = orig_dir/mid_name
     try:
@@ -137,16 +220,19 @@ def crop_for_track(det:str, aligned_names:List[str], aligned_imgs:List[np.ndarra
             if not dst.exists():
                 shutil.copyfile(src, dst)
         else:
-            # fallback: write the aligned gray frame to keep link alive
+            # fallback: write the aligned mid image to keep link alive
             cv2.imwrite(str(dst), mid_img)
     except Exception as e:
         print(f"[warn] could not place original mid-frame: {e}")
 
     return {
         "crop_rel": f"crops/{crop_name}",
-        "anno_rel": f"annotated/{anno_name}",
-        "orig_rel": f"originals/{mid_name}",
-        "mid_name": mid_name
+        "anno_rel": f"annotated/{anno_name}",       # annotated CROP (drawn on crop area)
+        "orig_rel": f"originals/{mid_name}",        # original mid-frame (full)
+        "gif_rel":  (f"gifs/{gif_name}" if gif_ok else ""),
+        "mp4_rel":  (f"mp4/{mp4_name}" if mp4_ok else ""),
+        "mid_name": mid_name,
+        "bbox": [int(x0), int(y0), int(x1), int(y1)]
     }
 
 # ----------------------------- Main -----------------------------
@@ -202,7 +288,7 @@ def main():
                 pos.append({"frame": names[t], "time_utc": iso, "x": float(x), "y": float(y)})
 
             paths = crop_for_track(det, names, images, tr)
-            cands.append({
+            cand = {
                 "detector": det,
                 "series_mid_frame": paths["mid_name"],
                 "track_index": i,
@@ -210,9 +296,13 @@ def main():
                 "image_size": [int(w),int(h)],
                 "origin": "upper_left",
                 "crop_path": paths["crop_rel"],
-                "annotated_path": paths["anno_rel"],
-                "original_mid_path": paths["orig_rel"],  # <-- frontend uses this for "Original"
-            })
+                "annotated_path": paths["anno_rel"],       # now points to annotated CROP
+                "original_mid_path": paths["orig_rel"],    # full original mid-frame
+            }
+            if paths.get("gif_rel"): cand["crop_gif_path"] = paths["gif_rel"]
+            if paths.get("mp4_rel"): cand["crop_mp4_path"] = paths["mp4_rel"]
+
+            cands.append(cand)
             crop_paths.append(str(pathlib.Path("detections")/paths["crop_rel"]))
         # AI classify in batch
         if crop_paths:
