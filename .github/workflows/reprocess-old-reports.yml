@@ -27,7 +27,6 @@ jobs:
 
       - name: Reprocess old reports (add ai_label/ai_score)
         env:
-          # Ensure relative imports like "from ai_classifier import ..." work
           PYTHONPATH: .
         run: |
           set -e
@@ -40,7 +39,7 @@ jobs:
           set -e
           if git diff --quiet -- detections/*.json; then
             echo "No JSON changes to commit."
-          else
+          else:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add detections/*.json
