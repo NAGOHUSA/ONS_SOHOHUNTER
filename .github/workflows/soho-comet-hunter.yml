@@ -47,3 +47,18 @@ jobs:
             git commit -m "chore(detections): update latest_status + candidates + assets"
             git push
           fi
+
+          - name: Update reports manifest
+  run: |
+    cd detections
+    latest=$(ls -t candidates_*.json | head -n1)
+    jq -n --arg latest "$latest" \
+      --argjson reports "$(ls -t candidates_*.json | jq -R . | jq -s .)" \
+      '{latest:$latest, reports:$reports}' > reports.json
+    cd ..
+    git config user.name "github-actions"
+    git config user.email "actions@github.com"
+    git add detections/reports.json
+    git commit -m "Update reports manifest for $latest" || echo "No changes to manifest"
+    git push
+
