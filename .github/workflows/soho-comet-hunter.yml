@@ -2,63 +2,83 @@ name: SOHO Comet Hunter (detect)
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # every 30 minutes
-  workflow_dispatch: {}
+    - cron: "*/30 * * * *" # every 30 minutes
+  workflow_dispatch:
+
+# Needed for pushes from the workflow
+permissions:
+  contents: write
+
+# Avoid overlapping runs that might race on commits
+concurrency:
+  group: soho-detect
+  cancel-in-progress: true
 
 jobs:
   detect:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     env:
-      AI_MIN_SCORE: "0.60"      # tighten if too many false positives
+      AI_MIN_SCORE: "0.60"  # tighten if too many false positives
       DETECTOR_DEBUG: "0"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # ensure full history for clean pushes
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install requirements
+      - name: Install system deps (jq)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Install Python requirements
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run detector
         run: |
-          set -e
+          set -euxo pipefail
           python detector/detect_comets.py --hours 6 --step-min 12 --out detections
+          # Best-effort, don't fail the build if this script exits non-zero
           python detector/ensure_candidates_latest.py || true
+
+      - name: Update reports manifest
+        run: |
+          set -euo pipefail
+          cd detections
+          shopt -s nullglob
+          # Find latest candidates_*.json, if any
+          latest=$(ls -t candidates_*.json 2>/dev/null | head -n1 || true)
+          if [[ -z "${latest:-}" ]]; then
+            echo "No candidates_*.json found; skipping reports.json update."
+            exit 0
+          fi
+          # Build reports.json = { latest, reports: [ ... ] }
+          printf '%s\n' candidates_*.json \
+            | jq -R . \
+            | jq -s --arg latest "$latest" '{latest:$latest, reports:.}' > reports.json
+          cd ..
 
       - name: Commit detections
         run: |
           set -e
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
           git add detections
+
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
             git commit -m "chore(detections): update latest_status + candidates + assets"
             git push
           fi
-
-          - name: Update reports manifest
-  run: |
-    cd detections
-    latest=$(ls -t candidates_*.json | head -n1)
-    jq -n --arg latest "$latest" \
-      --argjson reports "$(ls -t candidates_*.json | jq -R . | jq -s .)" \
-      '{latest:$latest, reports:$reports}' > reports.json
-    cd ..
-    git config user.name "github-actions"
-    git config user.email "actions@github.com"
-    git add detections/reports.json
-    git commit -m "Update reports manifest for $latest" || echo "No changes to manifest"
-    git push
-
