@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      AI_MIN_SCORE: "0.60"  # tighten if too many false positives
+      AI_MIN_SCORE: "0.40"  # tighten if too many false positives
       DETECTOR_DEBUG: "0"
 
     steps:
