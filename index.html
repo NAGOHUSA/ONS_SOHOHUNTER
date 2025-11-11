@@ -78,8 +78,7 @@
     @media (max-width:1200px){.stats{grid-template-columns:repeat(3,1fr)}}
     @media (max-width:820px){.stats{grid-template-columns:repeat(2,1fr)}}
     @media (max-width:480px){.stats{grid-template-columns:1fr}}
-    .live{display:grid;gap:12px;margin-top:14px;grid-template-columns:repeat(3,1fr)}
-    @media (max-width:1200px){.live{grid-template-columns:repeat(2,1fr)}}
+    .live{display:grid;gap:12px;margin-top:14px;grid-template-columns:repeat(2,1fr)}
     @media (max-width:820px){.live{grid-template-columns:1fr}}
     .feed{border:1px solid var(--border);background:linear-gradient(180deg,var(--bg-card),#0b1326);
       border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-sm)}
@@ -87,8 +86,9 @@
       background:linear-gradient(180deg, color-mix(in oklab, var(--accent) 10%, transparent), transparent)}
     .badge{font-size:11px;padding:4px 10px;border-radius:999px;background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;font-weight:800}
     .feed-b{aspect-ratio:1;background:#000;display:flex;align-items:center;justify-content:center}
-    .feed-b img,.feed-b video{width:100%;height:100%;object-fit:contain}
-    .feed.gif-hidden .feed-b{display:none}
+    .feed-b img{width:100%;height:100%;object-fit:contain}
+    .feed-b video{width:100%;height:100%;object-fit:contain}
+    .feed.gif-hidden .feed-b {display:none;}
     .feed-f{display:flex;justify-content:space-between;padding:10px 14px;color:var(--text-secondary);font-size:12px;background:rgba(255,255,255,.03)}
     .section-row{margin-top:18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
     .h2{font-size:20px;font-weight:900;letter-spacing:-.2px;background:linear-gradient(135deg,#fff,#c6e0ff);
@@ -97,379 +97,158 @@
     .card{grid-column:span 4;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;
       background:linear-gradient(180deg,var(--bg-card),#0b1326);box-shadow:var(--shadow-sm);transition:.15s;cursor:pointer}
     .card:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(0,0,0,.45);border-color:var(--accent)}
-    @media (max-width:1200px){.card{grid-column:span 6}} @media (max-width:820px){.card{grid-column:span 12}}
-  </style>
-</head>
-<body>
-  <header class="appbar">
-    <div class="container">
-      <div class="appbar-row">
-        <div class="brand-title">
-          <h1>SOHO Comet Hunter</h1>
-          <p class="brand-sub">Professional Dashboard</p>
-        </div>
-        <div class="appbar-actions">
-          <div class="status">
-            <div class="dot"></div>
-            Operational
-          </div>
-          <button class="btn primary" id="refreshBtn">Refresh All</button>
-        </div>
-      </div>
-    </div>
-  </header>
+    @media (max-width:1200px){.card{grid-column:span 6}} @media (max-width:8...(truncated 48414 characters)...rstDate}\n`;
+  doc += `Frames (time_utc, x, y):\n`;
 
-  <div class="toolbar">
-    <div class="container">
-      <div class="toolbar-grid">
-        <div class="group col-3">
-          <label class="label">Report</label>
-          <select class="select" id="reportSelect"><option value="">Select Report...</option></select>
-        </div>
-        <div class="group col-3">
-          <label class="label">Candidate</label>
-          <select class="select" id="candidateSelect"><option value="">All Candidates</option></select>
-        </div>
-        <div class="group col-3">
-          <label class="label">NASA Comets</label>
-          <select class="select" id="cometSelect"><option value="">All Comets</option></select>
-        </div>
-        <div class="group col-3">
-          <label class="label">Filters</label>
-          <div class="filters">
-            <label class="chip"><input type="checkbox" id="filterC2" checked> C2</label>
-            <label class="chip"><input type="checkbox" id="filterC3" checked> C3</label>
-            <label class="chip"><input type="checkbox" id="filterCCOR1" checked> CCOR-1</label>
-            <label class="chip"><input type="checkbox" id="filterComet"> Comet</label>
-            <label class="chip"><input type="checkbox" id="filterMarked"> Marked</label>
-            <label class="chip"><input type="checkbox" id="showNotComet"> Show Not Comet</label>
-            <label class="chip"><input type="checkbox" id="filterScore51"> Score >50%</label>
-            <label class="chip"><input type="checkbox" id="highlightOfficial" checked> Highlight Official</label>
-          </div>
-        </div>
-        <div class="group col-12">
-          <div class="export-row">
-            <button class="btn sm" id="exportTxtBtn">Export TXT</button>
-            <div class="divider"></div>
-            <button class="btn sm" id="exportCsvBtn">Export CSV</button>
-            <div class="divider"></div>
-            <button class="btn sm" id="exportSungrazerBtn">Export Sungrazer</button>
-            <div class="divider"></div>
-            <button class="btn sm" id="exportAllFlaggedBtn">Export All Flagged</button>
-            <label class="chip"><input type="checkbox" id="exportMarkedOnly"> Marked Only</label>
-            <select id="sungrazerObject" class="select sm">
-              <option>Kreutz</option><option>Meyer</option><option>Marsden</option><option>Kracht</option><option>Non-group</option>
-            </select>
-            <select id="sungrazerInstrument" class="select sm">
-              <option>C2</option><option>C3</option><option>CCOR1</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+  const lines = sungrazerLinesFromPositions(c);
+  lines.forEach(L => {
+    const [time, x, y] = L.split(' ');
+    const iso = c.timestamp || time;
+    const fullTime = iso.length > 8 ? new Date(iso).toISOString().replace('T', ' ').slice(0, 19) : iso;
+    doc += `  ${fullTime}, ${x}, ${y}\n`;
+  });
 
-  <main>
-    <div class="container">
-      <div class="stats">
-        <div class="stat"><div class="k">Candidates</div><div class="v" id="statCandidates">0</div></div>
-        <div class="stat"><div class="k">AI Comets</div><div class="v" id="statAIComets">0</div></div>
-        <div class="stat"><div class="k">Marked</div><div class="v" id="statMarked">0</div></div>
-        <div class="stat"><div class="k">Official</div><div class="v" id="statOfficial">0</div></div>
-        <div class="stat"><div class="k">Next Update</div><div class="v" id="countdown">5:00</div></div>
-        <div class="stat"><div class="k">Report Status</div><div class="v" id="reportStatus">--</div></div>
-      </div>
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([doc], {type:'text/plain;charset=utf-8'}));
+  a.download = `sungrazer_${c.id.replace(/\W+/g,'_')}.txt`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
-      <!-- ==================== LIVE FEEDS ==================== -->
-      <div class="live">
-        <!-- C2 -->
-        <div class="feed" id="feedC2">
-          <div class="feed-h"><span class="badge">LIVE</span><button class="btn sm" id="toggleC2">Hide GIF</button></div>
-          <div class="feed-b"><img id="c2LiveGif" data-src="https://soho.nascom.nasa.gov/data/LATEST/current_c2.gif"></div>
-          <div class="feed-f"><span>SOHO LASCO C2</span><span id="c2Timestamp">--:-- UTC</span></div>
-        </div>
-
-        <!-- C3 -->
-        <div class="feed" id="feedC3">
-          <div class="feed-h"><span class="badge">LIVE</span><button class="btn sm" id="toggleC3">Hide GIF</button></div>
-          <div class="feed-b"><img id="c3LiveGif" data-src="https://soho.nascom.nasa.gov/data/LATEST/current_c3.gif"></div>
-          <div class="feed-f"><span>SOHO LASCO C3</span><span id="c3Timestamp">--:-- UTC</span></div>
-        </div>
-
-        <!-- CCOR-1 -->
-        <div class="feed" id="feedCCOR1">
-          <div class="feed-h"><span class="badge">LIVE</span><button class="btn sm" id="toggleCCOR1">Hide Animation</button></div>
-          <div class="feed-b">
-            <video id="ccor1LiveVideo" data-src="https://ccor.nrl.navy.mil/ccor_realtime/CCOR1_realtime_RunDiff.mp4"
-                   autoplay loop muted playsinline></video>
-          </div>
-          <div class="feed-f"><span>GOES-19 CCOR-1</span><span id="ccor1Timestamp">--:-- UTC</span></div>
-        </div>
-      </div>
-
-      <div class="section-row">
-        <h2 class="h2">Candidates <span id="filterCount">(0)</span></h2>
-        <button class="btn sm" id="btnLoadMore">Load More</button>
-      </div>
-      <div class="grid" id="candidatesGrid"></div>
-      <div id="emptyState" style="text-align:center;color:var(--text-tertiary);padding:40px 0;">No candidates match filters.</div>
-
-      <div class="section-row">
-        <h2 class="h2">NASA Comet Database</h2>
-        <button class="btn sm" id="reloadDbBtn">Reload DB</button>
-      </div>
-      <table style="width:100%;border-collapse:collapse;">
-        <thead style="background:var(--bg-elev);"><tr><th>ID</th><th>Date</th><th>Instrument</th><th>Group</th></tr></thead>
-        <tbody id="dbTableBody"></tbody>
-      </table>
-      <p id="dbStatus" style="color:var(--text-tertiary);font-size:12px;margin-top:8px;">Loading...</p>
-    </div>
-  </main>
-
-  <script>
-    /* ======================= GLOBALS ======================= */
-    const els = {};
-    let reports = [], candidates = [], nasaComets = [], allFlaggedAcross = [];
-    let visibleCount = 30, PAGE_SIZE = 30, filterTimer = null;
-
-    /* ======================= UTILS ======================= */
-    const normPath = p => p.startsWith('/') ? p : `/${p}`;
-    const fetchJson = async url => { const r = await fetch(url); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
-    const downloadText = (name, txt) => {
+    function exportSungrazerSingle(c){
+      const objLine = (els.sungrazerObject.value || 'Kreutz Companion').trim();
+      const inst = c.telescope.includes('C2') ? 'C2' : (c.telescope.includes('C3') ? 'C3' : 'UNKNOWN');
+      const lines = sungrazerLinesFromPositions(c);
+      let doc = '1024x1024 images\n' + inst + '\n' + objLine + '\n';
+      if (lines.length) lines.forEach(L => { doc += `${L}\n`; });
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([txt], {type:'text/plain;charset=utf-8'}));
-      a.download = name; a.click();
-      setTimeout(()=>URL.revokeObjectURL(a.href),1000);
-    };
-    const sungrazerLinesFromPositions = c => c.positions.map(p => {
-      const t = p.time_utc.replace(/[-:TZ]/g,'').slice(0,12);
-      return `${t} ${Math.round(p.x)} ${Math.round(p.y)}`;
-    });
-
-    /* ======================= DATA LOADING ======================= */
-    async function populateReportSelect() {
-      try {
-        reports = await fetchJson('/detections/reports.json');
-        els.reportSelect.innerHTML = '<option value="">Select Report...</option>' +
-          reports.reports.map(r=>`<option value="${r}">${r.replace('candidates_','').replace('.json','')}</option>`).join('');
-      } catch(e){ console.error(e); }
+      a.href = URL.createObjectURL(new Blob([doc], {type:'text/plain;charset=utf-8'}));
+      a.download = `sungrazer_${c.id.replace(/\W+/g,'_')}.txt`;
+      a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
     }
 
-    async function loadReport(name){
-      if(!name) return;
-      try{
-        candidates = await fetchJson(`/detections/${name}`);
-        candidates.forEach(c=>{
-          c.id = `${c.detector}_${c.series_mid_frame.replace(/\W+/g,'_')}_${c.track_index}`;
-          c.telescope = c.detector;
-          c.label = c.ai_label || 'unknown';
-          c.score = c.ai_score || 0;
-          c.timestamp = c.positions?.[Math.floor(c.positions.length/2)]?.time_utc || '';
-          c.cx = c.positions?.reduce((s,p)=>s+p.x,0)/c.positions?.length || null;
-          c.cy = c.positions?.reduce((s,p)=>s+p.y,0)/c.positions?.length || null;
-          c.bbox = c.bbox || null;
-          c.originalPath = c.original_mid_path;
-          c.annotatedFull = c.annotated_path;
-          c.cropPath = c.crop_path;
-          c.gifCrop = c.crop_gif_path;
-          c.gifAnn = c.annotated_gif_path || '';
-          c.mp4 = c.crop_mp4_path || '';
-          c.reportName = name;
-          c.marked = false;
-        });
-        crossCheckCandidates(); scheduleFilter();
-        els.reportStatus.textContent = `Loaded ${candidates.length} candidates`;
-      }catch(e){ console.error(e); els.reportStatus.textContent='Load failed'; }
+    function exportCandidatePackage(c){
+      const payload = {
+        id: c.id,
+        telescope: c.telescope,
+        label: c.label,
+        score: c.score,
+        timestamp: c.timestamp,
+        centroid: (Number.isFinite(c.cx)&&Number.isFinite(c.cy)) ? {x:c.cx,y:c.cy} : null,
+        bbox: c.bbox,
+        positions: Array.isArray(c.positions) ? c.positions : [],
+        assets: {
+          original: c.originalPath ? normPath(c.originalPath) : '',
+          annotated_full: c.annotatedFull ? normPath(c.annotatedFull) : '',
+          crop: c.cropPath ? normPath(c.cropPath) : '',
+          gif: c.gifAnn ? normPath(c.gifAnn) : (c.gifCrop ? normPath(c.gifCrop) : ''),
+          mp4: c.mp4 ? normPath(c.mp4) : ''
+        },
+        report: c.reportName || null
+      };
+      downloadText(`candidate_${c.id.replace(/\W+/g,'_')}.json`, JSON.stringify(payload, null, 2));
     }
 
-    function crossCheckCandidates(){
-      candidates.forEach(c=>{
-        c.official = nasaComets.some(com=>{
-          const dt = Math.abs(new Date(c.timestamp)-new Date(com.date));
-          return dt<3600000 && com.instrument===c.telescope;
-        });
-      });
-    }
-
-    async function loadNasaCatalog(){
-      els.dbStatus.textContent='Loading...';
-      try{
-        const data = await fetchJson('https://sungrazer.nrl.navy.mil/api/comets?limit=500');
-        nasaComets = data.comets.map(com=>({id:com.id,date:com.discovery_date,instrument:com.instrument,group:com.group}));
-        els.dbTableBody.innerHTML = nasaComets.map(com=>`<tr><td>${com.id}</td><td>${com.date}</td><td>${com.instrument}</td><td>${com.group}</td></tr>`).join('');
-        els.dbStatus.textContent=`Loaded ${nasaComets.length} comets`;
-        crossCheckCandidates(); scheduleFilter();
-      }catch(e){ console.error(e); els.dbStatus.textContent='Load failed'; }
-    }
-
-    /* ======================= FILTER / RENDER ======================= */
-    function scheduleFilter(){ clearTimeout(filterTimer); filterTimer=setTimeout(renderCandidates,100); }
-
-    function shouldShow(c){
-      if(!els.showNotComet.checked && c.label!=='comet') return false;
-      if(els.filterScore51.checked && c.score<0.51) return false;
-      if(els.filterComet.checked && c.label!=='comet') return false;
-      if(els.filterMarked.checked && !c.marked) return false;
-      const tel = c.telescope.toUpperCase();
-      if(els.filterC2.checked && tel.includes('C2')) return true;
-      if(els.filterC3.checked && tel.includes('C3')) return true;
-      if(els.filterCCOR1.checked && tel.includes('CCOR')) return true;
-      return false;
-    }
-
-    function renderCandidates(){
-      const filtered = candidates.filter(shouldShow).slice(0,visibleCount);
-      els.filterCount.textContent=`(${filtered.length}/${candidates.length})`;
-      els.emptyState.style.display = filtered.length?'none':'block';
-      els.candidatesGrid.innerHTML = filtered.map(c=>{
-        const highlight = els.highlightOfficial.checked && c.official ? 'border-color:var(--success);' : '';
-        return `<div class="card" style="${highlight}" onclick="markCandidate('${c.id}')">
-          <img src="${normPath(c.cropPath)}" style="width:100%;aspect-ratio:1;object-fit:contain;background:#000;">
-          <div style="padding:10px 12px;">
-            <div style="font-weight:700;">${c.telescope} #${c.track_index}</div>
-            <div style="color:var(--text-secondary);font-size:12px;">Score: ${(c.score*100).toFixed(0)}% • ${c.timestamp}</div>
-          </div></div>`;
-      }).join('');
-      updateStats();
-    }
-
-    function markCandidate(id){
-      const c = candidates.find(x=>x.id===id);
-      if(c) c.marked = !c.marked;
-      allFlaggedAcross = [...new Set([...allFlaggedAcross, ...(c.marked?[c]:[])])].filter(x=>x.marked);
-      renderCandidates();
-    }
-
-    function updateStats(){
-      els.statCandidates.textContent = candidates.length;
-      els.statAIComets.textContent = candidates.filter(c=>c.label==='comet').length;
-      els.statMarked.textContent = candidates.filter(c=>c.marked).length;
-      els.statOfficial.textContent = candidates.filter(c=>c.official).length;
-    }
-
-    /* ======================= EXPORTS ======================= */
-    function exportTXT(){
-      const list = candidates.filter(c=>!els.exportMarkedOnly.checked||c.marked);
-      let txt=''; list.forEach(c=>{
-        txt+=`${c.id}\n${c.timestamp}\n${c.telescope}\nScore: ${c.score}\nPositions:\n`;
-        c.positions.forEach(p=>txt+=`  ${p.time_utc} x:${p.x} y:${p.y}\n`); txt+='\n';
-      });
-      downloadText('candidates.txt',txt);
-    }
-    function exportCSV(){
-      let csv='ID,Telescope,Score,Timestamp,CX,CY\n';
-      const list = candidates.filter(c=>!els.exportMarkedOnly.checked||c.marked);
-      list.forEach(c=>csv+=`${c.id},${c.telescope},${c.score},${c.timestamp},${c.cx},${c.cy}\n`);
-      downloadText('candidates.csv',csv);
-    }
-    function exportSungrazer(){
-      const list = candidates.filter(c=>!els.exportMarkedOnly.checked||c.marked);
-      let txt=''; list.forEach(c=>{
-        txt+=`== ${c.id} ==\n${els.sungrazerObject.value}\n${c.telescope}\nFirstDate: ${c.timestamp.slice(0,10).replace(/-/g,'')}\nFrames (time_utc, x, y):\n`;
-        sungrazerLinesFromPositions(c).forEach(L=>{
-          const [t,x,y]=L.split(' ');
-          const iso = c.timestamp||t;
-          const ft = iso.length>8?new Date(iso).toISOString().replace('T',' ').slice(0,19):iso;
-          txt+=`  ${ft}, ${x}, ${y}\n`;
-        });
-        txt+='\n';
-      });
-      downloadText('sungrazer_batch.txt',txt);
-    }
-
-    /* ======================= LIVE GIF/VIDEO TOGGLE ======================= */
-    function toggleLiveGif(feedId, btnId, mediaId, tsId){
-      const feed=document.getElementById(feedId), btn=document.getElementById(btnId),
-            media=document.getElementById(mediaId);
-      const hidden = feed.classList.toggle('gif-hidden');
-      const type = mediaId.toLowerCase().includes('video')?'Animation':'GIF';
-      btn.textContent = hidden?`Show ${type}`:`Hide ${type}`;
-      if(!hidden && !media.src) media.src = media.dataset.src;
-    }
-
-    /* ======================= TIME ======================= */
     function updateLiveStamps(){
-      const t=new Date(), hh=String(t.getUTCHours()).padStart(2,'0'), mm=String(t.getUTCMinutes()).padStart(2,'0');
+      const t = new Date();
+      const hh = String(t.getUTCHours()).padStart(2,'0');
+      const mm = String(t.getUTCMinutes()).padStart(2,'0');
       els.c2Timestamp.textContent = `${hh}:${mm} UTC`;
       els.c3Timestamp.textContent = `${hh}:${mm} UTC`;
       els.ccor1Timestamp.textContent = `${hh}:${mm} UTC`;
     }
-    function startCountdown(sec=300){
-      let s=sec;
-      const tick=()=>{ const m=String(Math.floor(s/60)).padStart(1,'0'), r=String(s%60).padStart(2,'0');
-        els.countdown.textContent=`${m}:${r}`; s<=0?(refreshAll(),s=sec):s--; };
-      tick(); setInterval(tick,1000);
+
+    function startCountdown(seconds=300){
+      let s = seconds;
+      const tick = ()=>{
+        const m = String(Math.floor(s/60)).padStart(1,'0');
+        const r = String(s%60).padStart(2,'0');
+        els.countdown.textContent = `${m}:${r}`;
+        if (s<=0){ refreshAll(); s=seconds; } else { s--; }
+      };
+      tick(); setInterval(tick, 1000);
     }
-    function refreshAll(){ const sel=els.reportSelect.value; if(sel) loadReport(sel); updateLiveStamps(); }
 
-    /* ======================= DOM READY ======================= */
-    document.addEventListener('DOMContentLoaded',()=>{
+    function refreshAll(){
+      const sel = els.reportSelect.value;
+      if (sel) loadReport(sel);
+      updateLiveStamps();
+    }
 
-      /* ---- element cache ---- */
-      Object.assign(els,{
-        reportSelect:document.getElementById('reportSelect'),
-        candidateSelect:document.getElementById('candidateSelect'),
-        cometSelect:document.getElementById('cometSelect'),
-        refreshBtn:document.getElementById('refreshBtn'),
-        countdown:document.getElementById('countdown'),
-        exportTxtBtn:document.getElementById('exportTxtBtn'),
-        exportCsvBtn:document.getElementById('exportCsvBtn'),
+    function toggleLiveGif(feedId, btnId, imgId, tsId){
+      const feed = document.getElementById(feedId);
+      const btn = document.getElementById(btnId);
+      const img = document.getElementById(imgId);
+      const hidden = feed.classList.toggle('gif-hidden');
+      const type = imgId.toLowerCase().includes('video') ? 'Animation' : 'GIF';
+      btn.textContent = hidden ? `Show ${type}` : `Hide ${type}`;
+      if (!hidden && !img.src) img.src = img.dataset.src || img.getAttribute('src');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      Object.assign(els, {
+        reportSelect:      document.getElementById('reportSelect'),
+        candidateSelect:   document.getElementById('candidateSelect'),
+        cometSelect:       document.getElementById('cometSelect'),
+        refreshBtn:        document.getElementById('refreshBtn'),
+        countdown:         document.getElementById('countdown'),
+        exportTxtBtn:      document.getElementById('exportTxtBtn'),
+        exportCsvBtn:      document.getElementById('exportCsvBtn'),
         exportSungrazerBtn:document.getElementById('exportSungrazerBtn'),
         exportAllFlaggedBtn:document.getElementById('exportAllFlaggedBtn'),
-        exportMarkedOnly:document.getElementById('exportMarkedOnly'),
-        sungrazerObject:document.getElementById('sungrazerObject'),
+        exportMarkedOnly:  document.getElementById('exportMarkedOnly'),
+        sungrazerObject:   document.getElementById('sungrazerObject'),
         sungrazerInstrument:document.getElementById('sungrazerInstrument'),
-        filterC2:document.getElementById('filterC2'),
-        filterC3:document.getElementById('filterC3'),
-        filterCCOR1:document.getElementById('filterCCOR1'),
-        filterComet:document.getElementById('filterComet'),
-        filterMarked:document.getElementById('filterMarked'),
-        showNotComet:document.getElementById('showNotComet'),
-        highlightOfficial:document.getElementById('highlightOfficial'),
-        filterScore51:document.getElementById('filterScore51'),
-        candidatesGrid:document.getElementById('candidatesGrid'),
-        filterCount:document.getElementById('filterCount'),
-        emptyState:document.getElementById('emptyState'),
-        c2LiveGif:document.getElementById('c2LiveGif'),
-        c3LiveGif:document.getElementById('c3LiveGif'),
-        ccor1LiveVideo:document.getElementById('ccor1LiveVideo'),
-        c2Timestamp:document.getElementById('c2Timestamp'),
-        c3Timestamp:document.getElementById('c3Timestamp'),
-        ccor1Timestamp:document.getElementById('ccor1Timestamp'),
-        reloadDbBtn:document.getElementById('reloadDbBtn'),
-        dbStatus:document.getElementById('dbStatus'),
-        dbTableBody:document.getElementById('dbTableBody'),
-        reportStatus:document.getElementById('reportStatus')
+        filterC2:          document.getElementById('filterC2'),
+        filterC3:          document.getElementById('filterC3'),
+        filterCCOR1:       document.getElementById('filterCCOR1'),
+        filterComet:       document.getElementById('filterComet'),
+        filterMarked:      document.getElementById('filterMarked'),
+        showNotComet:      document.getElementById('showNotComet'),
+        highlightOfficial: document.getElementById('highlightOfficial'),
+        filterScore51:     document.getElementById('filterScore51'),
+        candidatesGrid:    document.getElementById('candidatesGrid'),
+        filterCount:       document.getElementById('filterCount'),
+        emptyState:        document.getElementById('emptyState'),
+        c2LiveGif:         document.getElementById('c2LiveGif'),
+        c3LiveGif:         document.getElementById('c3LiveGif'),
+        ccor1LiveVideo:    document.getElementById('ccor1LiveVideo'),
+        c2Timestamp:       document.getElementById('c2Timestamp'),
+        c3Timestamp:       document.getElementById('c3Timestamp'),
+        ccor1Timestamp:    document.getElementById('ccor1Timestamp'),
+        reloadDbBtn:       document.getElementById('reloadDbBtn'),
+        dbStatus:          document.getElementById('dbStatus'),
+        dbTableBody:       document.getElementById('dbTableBody'),
+        reportStatus:      document.getElementById('reportStatus')
       });
 
-      /* ---- live-feed toggles ---- */
-      document.getElementById('toggleC2').addEventListener('click',()=>toggleLiveGif('feedC2','toggleC2','c2LiveGif','c2Timestamp'));
-      document.getElementById('toggleC3').addEventListener('click',()=>toggleLiveGif('feedC3','toggleC3','c3LiveGif','c3Timestamp'));
-      document.getElementById('toggleCCOR1').addEventListener('click',()=>toggleLiveGif('feedCCOR1','toggleCCOR1','ccor1LiveVideo','ccor1Timestamp'));
+      document.getElementById('toggleC2').addEventListener('click', () => toggleLiveGif('feedC2','toggleC2','c2LiveGif','c2Timestamp'));
+      document.getElementById('toggleC3').addEventListener('click', () => toggleLiveGif('feedC3','toggleC3','c3LiveGif','c3Timestamp'));
+      document.getElementById('toggleCCOR1').addEventListener('click', () => toggleLiveGif('feedCCOR1','toggleCCOR1','ccor1LiveVideo','ccor1Timestamp'));
 
-      /* ---- UI actions ---- */
-      els.refreshBtn.addEventListener('click',refreshAll);
-      els.reportSelect.addEventListener('change',e=>loadReport(e.target.value));
-      els.candidateSelect.addEventListener('change',scheduleFilter);
-      els.cometSelect.addEventListener('change',()=>{crossCheckCandidates();scheduleFilter();});
-      ['filterC2','filterC3','filterCCOR1','filterComet','filterMarked','showNotComet','highlightOfficial','filterScore51']
-        .forEach(id=>els[id]?.addEventListener('change',scheduleFilter));
-      els.exportTxtBtn.addEventListener('click',exportTXT);
-      els.exportCsvBtn.addEventListener('click',exportCSV);
-      els.exportSungrazerBtn.addEventListener('click',exportSungrazer);
-      els.exportAllFlaggedBtn.addEventListener('click',()=>downloadText('all_flagged_comets.json',
+      els.refreshBtn.addEventListener('click', refreshAll);
+      els.reportSelect.addEventListener('change', e=> loadReport(e.target.value));
+      els.candidateSelect.addEventListener('change', scheduleFilter);
+      els.cometSelect.addEventListener('change', ()=>{ crossCheckCandidates(); scheduleFilter(); });
+      ['filterC2','filterC3','filterCCOR1','filterComet','filterMarked','showNotComet','highlightOfficial','filterScore51'].forEach(id=>{
+        els[id]?.addEventListener('change', scheduleFilter);
+      });
+      els.exportTxtBtn.addEventListener('click', exportTXT);
+      els.exportCsvBtn.addEventListener('click', exportCSV);
+      els.exportSungrazerBtn.addEventListener('click', exportSungrazer);
+      els.exportAllFlaggedBtn.addEventListener('click', ()=>downloadText('all_flagged_comets.json',
         JSON.stringify(allFlaggedAcross.map(c=>({
-          id:c.id,telescope:c.telescope,label:c.label,score:c.score,
-          timestamp:c.timestamp,cx:c.cx,cy:c.cy,report:c.reportName,
-          paths:{original:c.originalPath,annotated_full:c.annotatedFull,crop:c.cropPath,gif_ann:c.gifAnn,gif_crop:c.gifCrop,mp4:c.mp4}
-        })),null,2)));
-      els.reloadDbBtn.addEventListener('click',loadNasaCatalog);
-      document.getElementById('btnLoadMore').addEventListener('click',()=>{
-        visibleCount+=PAGE_SIZE; renderCandidates();
-        document.getElementById('btnLoadMore').scrollIntoView({behavior:'smooth',block:'center'});
+          id: c.id, telescope: c.telescope, label: c.label, score: c.score,
+          timestamp: c.timestamp, cx: c.cx, cy: c.cy, report: c.reportName,
+          paths: { original:c.originalPath, annotated_full:c.annotatedFull, crop:c.cropPath, gif_ann:c.gifAnn, gif_crop:c.gifCrop, mp4:c.mp4 }
+        })), null, 2)));
+      els.reloadDbBtn.addEventListener('click', loadNasaCatalog);
+      document.getElementById('btnLoadMore').addEventListener('click', () => {
+        visibleCount += PAGE_SIZE;
+        renderCandidates();
+        document.getElementById('btnLoadMore').scrollIntoView({behavior:'smooth', block:'center'});
       });
 
-      /* ---- init ---- */
       populateReportSelect();
       loadNasaCatalog();
       updateLiveStamps();
