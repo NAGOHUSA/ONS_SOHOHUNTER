@@ -78,7 +78,8 @@
     @media (max-width:1200px){.stats{grid-template-columns:repeat(3,1fr)}}
     @media (max-width:820px){.stats{grid-template-columns:repeat(2,1fr)}}
     @media (max-width:480px){.stats{grid-template-columns:1fr}}
-    .live{display:grid;gap:12px;margin-top:14px;grid-template-columns:repeat(2,1fr)}
+    .live{display:grid;gap:12px;margin-top:14px;grid-template-columns:repeat(3,1fr)}
+    @media (max-width:1200px){.live{grid-template-columns:repeat(2,1fr)}}
     @media (max-width:820px){.live{grid-template-columns:1fr}}
     .feed{border:1px solid var(--border);background:linear-gradient(180deg,var(--bg-card),#0b1326);
       border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow-sm)}
@@ -86,7 +87,8 @@
       background:linear-gradient(180deg, color-mix(in oklab, var(--accent) 10%, transparent), transparent)}
     .badge{font-size:11px;padding:4px 10px;border-radius:999px;background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;font-weight:800}
     .feed-b{aspect-ratio:1;background:#000;display:flex;align-items:center;justify-content:center}
-    .feed-b img{width:100%;height:100%;object-fit:contain}
+    .feed-b img,.feed-b video{width:100%;height:100%;object-fit:contain}
+    .feed.gif-hidden .feed-b{display:none}
     .feed-f{display:flex;justify-content:space-between;padding:10px 14px;color:var(--text-secondary);font-size:12px;background:rgba(255,255,255,.03)}
     .section-row{margin-top:18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
     .h2{font-size:20px;font-weight:900;letter-spacing:-.2px;background:linear-gradient(135deg,#fff,#c6e0ff);
@@ -96,125 +98,71 @@
       background:linear-gradient(180deg,var(--bg-card),#0b1326);box-shadow:var(--shadow-sm);transition:.15s;cursor:pointer}
     .card:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(0,0,0,.45);border-color:var(--accent)}
     @media (max-width:1200px){.card{grid-column:span 6}} @media (max-width:820px){.card{grid-column:span 12}}
-    .thumb{width:100%;aspect-ratio:16/10;background:#000} .thumb img{width:100%;height:100%;object-fit:contain}
-    .gif{max-height:150px;overflow:hidden;border-top:1px solid var(--border);background:#000} .gif img{width:100%}
-    .card-b{padding:12px} .row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-    .chip-label{font-size:11px;font-weight:900;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.06);
-      border:1px solid var(--border);color:var(--text-secondary)}
-    .chip-label.comet{background:linear-gradient(180deg,#2e7d4d,#205f39);color:#e6ffef;border-color:#2b7b4b}
-    .chip-label.not_comet{background:linear-gradient(180deg,#3a4258,#2a3144)}
-    .chip-label.unknown{background:linear-gradient(180deg,#334155,#2a3448)}
-    .chip-label.official{background:linear-gradient(180deg,#fbd365,#f6b21a);color:#1a1605;border-color:#f9ca4e}
-    .chip-label.match{background:linear-gradient(180deg,#6b46c1,#4c1d95);color:#f0e6ff;border-color:#7e57c2}
-    .meta{margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;color:var(--text-secondary)}
-    .meta .k{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-tertiary);font-weight:800}
-    .actions{display:flex;gap:8px;margin-top:10px}
-    .empty{padding:28px;text-align:center;color:var(--text-secondary);border:1px dashed var(--border);border-radius:var(--radius);background:rgba(255,255,255,.03)}
-    .modal{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.72);backdrop-filter:blur(12px);padding:20px;align-items:center;justify-content:center}
-    .modal.active{display:flex}
-    .modal-card{width:min(980px,100%);max-height:92vh;overflow:auto;background:linear-gradient(180deg,var(--bg-card),#0b1326);
-      border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow)}
-    .modal-h{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);
-      background:linear-gradient(180deg, color-mix(in oklab, var(--accent) 10%, transparent), transparent)}
-    .modal-b{padding:16px}
-    .seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:12px;overflow:hidden}
-    .seg button{height:36px;padding:0 12px;border:0;background:transparent;color:var(--text-secondary);font-weight:800;cursor:pointer}
-    .seg button.active{background:rgba(255,255,255,.08);color:#fff}
-    .bigimg{
-      display:block;width:100%;max-width:100%;height:auto;max-height:70vh;
-      object-fit:contain;border-radius:12px;border:1px solid var(--border);background:#000;margin-top:12px;
-    }
-    .bigimg-wrap{position:relative;display:block;margin-top:12px}
-    .bigimg-wrap #segPin{
-      position:absolute;pointer-events:none;display:none;
-      width:16px;height:16px;transform:translate(-50%,-50%);
-    }
-    .bigimg-wrap #segPin::before,.bigimg-wrap #segPin::after{
-      content:"";position:absolute;left:0;top:50%;width:16px;height:0;
-      border-top:2px solid rgba(255,255,0,.95);
-    }
-    .bigimg-wrap #segPin::after{transform:rotate(90deg);}
-    .bigimg-wrap #segPin{border:2px solid rgba(255,255,0,.95);border-radius:50%;}
-    .credits{margin:32px 0 24px;color:var(--text-tertiary);font-size:13px;text-align:center}
-    .credits a{color:#b9d8ff;text-decoration:none} .credits a:hover{color:#fff;text-decoration:underline}
-    .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite}
-    @keyframes spin{to{transform:rotate(360deg)}}
-    .feed.gif-hidden .feed-b,
-    .feed.gif-hidden .feed-f { display:none; }
-    .feed.gif-hidden .feed-h { border-bottom:none; }
   </style>
 </head>
 <body>
-  <div class="appbar">
+  <header class="appbar">
     <div class="container">
       <div class="appbar-row">
         <div class="brand-title">
-          <h1>SOHO Comet Hunter 3.5</h1>
-          <p class="brand-sub">OurNightSky.US - Comet Detection Dashboard in partnership with NagohCreative.com</p>
+          <h1>SOHO Comet Hunter</h1>
+          <p class="brand-sub">Professional Dashboard</p>
         </div>
         <div class="appbar-actions">
-          <div class="status"><span class="dot"></span>Live</div>
-          <!-- <a class="btn sm" href="https://github.com/NAGOHUSA/ONS_SOHOHUNTER" target="_blank" rel="noopener">GitHub</a> -->
-          <button class="btn sm" id="refreshBtn">Refresh</button>
+          <div class="status">
+            <div class="dot"></div>
+            Operational
+          </div>
+          <button class="btn primary" id="refreshBtn">Refresh All</button>
         </div>
       </div>
     </div>
-  </div>
+  </header>
 
   <div class="toolbar">
     <div class="container">
       <div class="toolbar-grid">
-        <div class="group col-4">
-          <div class="label">Detection Report <span id="reportStatus" style="font-weight:400;font-size:10px;color:var(--text-tertiary);margin-left:6px"></span></div>
-          <select id="reportSelect" class="select"><option>Loading reports…</option></select>
+        <div class="group col-3">
+          <label class="label">Report</label>
+          <select class="select" id="reportSelect"><option value="">Select Report...</option></select>
         </div>
-        <div class="group col-4">
-          <div class="label">Candidate</div>
-          <select id="candidateSelect" class="select"><option value="">All candidates</option></select>
+        <div class="group col-3">
+          <label class="label">Candidate</label>
+          <select class="select" id="candidateSelect"><option value="">All Candidates</option></select>
         </div>
-        <div class="group col-4">
-          <div class="label">Comet Candidates (flagged)</div>
-          <select id="cometSelect" class="select">
-            <option value="">All flagged (current report)</option>
-          </select>
+        <div class="group col-3">
+          <label class="label">NASA Comets</label>
+          <select class="select" id="cometSelect"><option value="">All Comets</option></select>
         </div>
-
-        <div class="group col-12">
-          <div class="label">Export</div>
-          <div class="export-row">
-            <button id="exportTxtBtn" class="btn sm">TXT</button>
-            <div class="divider"></div>
-            <button id="exportCsvBtn" class="btn sm">CSV</button>
-            <div class="divider"></div>
-            <button id="exportSungrazerBtn" class="btn sm primary">Sungrazer</button>
-            <div class="divider"></div>
-            <label class="chip"><input type="checkbox" id="exportMarkedOnly">Marked Only</label>
-            <div class="divider"></div>
-            <input id="sungrazerObject" class="input" placeholder="Object / Stream (e.g., Kreutz Companion)" style="max-width:320px">
-            <select id="sungrazerInstrument" class="select" style="max-width:180px">
-              <option value="C2">C2</option>
-              <option value="C3">C3</option>
-              <option value="auto" selected>Auto by candidate</option>
-            </select>
-            <div class="divider"></div>
-            <button id="exportAllFlaggedBtn" class="btn sm">Export All-Flagged JSON</button>
-
-            <div style="margin-left:auto;display:flex;align-items:center;gap:10px;padding-left:8px">
-              <span style="font-size:12px;color:var(--text-secondary)">Next update in</span>
-              <span id="countdown" style="font:700 13px var(--mono);color:#bfe0ff">60:00</span>
-            </div>
+        <div class="group col-3">
+          <label class="label">Filters</label>
+          <div class="filters">
+            <label class="chip"><input type="checkbox" id="filterC2" checked> C2</label>
+            <label class="chip"><input type="checkbox" id="filterC3" checked> C3</label>
+            <label class="chip"><input type="checkbox" id="filterCCOR1" checked> CCOR-1</label>
+            <label class="chip"><input type="checkbox" id="filterComet"> Comet</label>
+            <label class="chip"><input type="checkbox" id="filterMarked"> Marked</label>
+            <label class="chip"><input type="checkbox" id="showNotComet"> Show Not Comet</label>
+            <label class="chip"><input type="checkbox" id="filterScore51"> Score >50%</label>
+            <label class="chip"><input type="checkbox" id="highlightOfficial" checked> Highlight Official</label>
           </div>
         </div>
-
         <div class="group col-12">
-          <div class="filters">
-            <label class="chip"><input type="checkbox" id="filterC2">C2</label>
-            <label class="chip"><input type="checkbox" id="filterC3">C3</label>
-            <label class="chip"><input type="checkbox" id="filterComet">AI Comet Only</label>
-            <label class="chip"><input type="checkbox" id="filterMarked">Marked Only</label>
-            <label class="chip"><input type="checkbox" id="showNotComet">Show non-comets</label>
-            <label class="chip"><input type="checkbox" id="highlightOfficial" checked>Highlight Official</label>
-            <label class="chip"><input type="checkbox" id="filterScore51">Score >= 51%</label>
+          <div class="export-row">
+            <button class="btn sm" id="exportTxtBtn">Export TXT</button>
+            <div class="divider"></div>
+            <button class="btn sm" id="exportCsvBtn">Export CSV</button>
+            <div class="divider"></div>
+            <button class="btn sm" id="exportSungrazerBtn">Export Sungrazer</button>
+            <div class="divider"></div>
+            <button class="btn sm" id="exportAllFlaggedBtn">Export All Flagged</button>
+            <label class="chip"><input type="checkbox" id="exportMarkedOnly"> Marked Only</label>
+            <select id="sungrazerObject" class="select sm">
+              <option>Kreutz</option><option>Meyer</option><option>Marsden</option><option>Kracht</option><option>Non-group</option>
+            </select>
+            <select id="sungrazerInstrument" class="select sm">
+              <option>C2</option><option>C3</option><option>CCOR1</option>
+            </select>
           </div>
         </div>
       </div>
@@ -224,1040 +172,304 @@
   <main>
     <div class="container">
       <div class="stats">
-        <div class="stat"><div class="k">Total</div><div id="statTotal" class="v">0</div></div>
-        <div class="stat"><div class="k">AI Comets</div><div id="statComets" class="v">0</div></div>
-        <div class="stat"><div class="k">C2</div><div id="statC2" class="v">0</div></div>
-        <div class="stat"><div class="k">C3</div><div id="statC3" class="v">0</div></div>
-        <div class="stat"><div class="k">Marked</div><div id="statMarked" class="v">0</div></div>
-        <div class="stat"><div class="k">Official</div><div id="statOfficial" class="v">0</div></div>
+        <div class="stat"><div class="k">Candidates</div><div class="v" id="statCandidates">0</div></div>
+        <div class="stat"><div class="k">AI Comets</div><div class="v" id="statAIComets">0</div></div>
+        <div class="stat"><div class="k">Marked</div><div class="v" id="statMarked">0</div></div>
+        <div class="stat"><div class="k">Official</div><div class="v" id="statOfficial">0</div></div>
+        <div class="stat"><div class="k">Next Update</div><div class="v" id="countdown">5:00</div></div>
+        <div class="stat"><div class="k">Report Status</div><div class="v" id="reportStatus">--</div></div>
       </div>
 
+      <!-- ==================== LIVE FEEDS ==================== -->
       <div class="live">
+        <!-- C2 -->
         <div class="feed" id="feedC2">
-          <div class="feed-h">
-            <div><strong>LASCO C2</strong> <span class="badge">LIVE</span></div>
-            <div style="display:flex;gap:6px">
-              <button class="btn sm" id="toggleC2">Hide GIF</button>
-              <a class="btn sm" href="https://soho.nascom.nasa.gov/data/LATEST/current_c2.gif" target="_blank" rel="noopener">Open</a>
-            </div>
-          </div>
-          <div class="feed-b"><img id="c2LiveGif" loading="lazy" src="https://soho.nascom.nasa.gov/data/LATEST/current_c2.gif" alt="C2 Live"></div>
-          <div class="feed-f"><span>Last Updated</span><span id="c2Timestamp">--:--</span></div>
+          <div class="feed-h"><span class="badge">LIVE</span><button class="btn sm" id="toggleC2">Hide GIF</button></div>
+          <div class="feed-b"><img id="c2LiveGif" data-src="https://soho.nascom.nasa.gov/data/LATEST/current_c2.gif"></div>
+          <div class="feed-f"><span>SOHO LASCO C2</span><span id="c2Timestamp">--:-- UTC</span></div>
         </div>
 
+        <!-- C3 -->
         <div class="feed" id="feedC3">
-          <div class="feed-h">
-            <div><strong>LASCO C3</strong> <span class="badge">LIVE</span></div>
-            <div style="display:flex;gap:6px">
-              <button class="btn sm" id="toggleC3">Hide GIF</button>
-              <a class="btn sm" href="https://soho.nascom.nasa.gov/data/LATEST/current_c3.gif" target="_blank" rel="noopener">Open</a>
-            </div>
+          <div class="feed-h"><span class="badge">LIVE</span><button class="btn sm" id="toggleC3">Hide GIF</button></div>
+          <div class="feed-b"><img id="c3LiveGif" data-src="https://soho.nascom.nasa.gov/data/LATEST/current_c3.gif"></div>
+          <div class="feed-f"><span>SOHO LASCO C3</span><span id="c3Timestamp">--:-- UTC</span></div>
+        </div>
+
+        <!-- CCOR-1 -->
+        <div class="feed" id="feedCCOR1">
+          <div class="feed-h"><span class="badge">LIVE</span><button class="btn sm" id="toggleCCOR1">Hide Animation</button></div>
+          <div class="feed-b">
+            <video id="ccor1LiveVideo" data-src="https://ccor.nrl.navy.mil/ccor_realtime/CCOR1_realtime_RunDiff.mp4"
+                   autoplay loop muted playsinline></video>
           </div>
-          <div class="feed-b"><img id="c3LiveGif" loading="lazy" src="https://soho.nascom.nasa.gov/data/LATEST/current_c3.gif" alt="C3 Live"></div>
-          <div class="feed-f"><span>Last Updated</span><span id="c3Timestamp">--:--</span></div>
+          <div class="feed-f"><span>GOES-19 CCOR-1</span><span id="ccor1Timestamp">--:-- UTC</span></div>
         </div>
       </div>
 
       <div class="section-row">
-        <div class="h2">Detection Candidates</div>
-        <div id="filterCount" class="label" style="text-transform:none">Loading…</div>
+        <h2 class="h2">Candidates <span id="filterCount">(0)</span></h2>
+        <button class="btn sm" id="btnLoadMore">Load More</button>
       </div>
+      <div class="grid" id="candidatesGrid"></div>
+      <div id="emptyState" style="text-align:center;color:var(--text-tertiary);padding:40px 0;">No candidates match filters.</div>
 
-      <div id="candidatesGrid" class="grid"></div>
-      <div id="emptyState" class="empty" style="display:none">No candidates match filters</div>
-      <div id="loadMoreWrap" style="text-align:center;margin:20px 0;display:none">
-        <button id="btnLoadMore" class="btn">Load more</button>
+      <div class="section-row">
+        <h2 class="h2">NASA Comet Database</h2>
+        <button class="btn sm" id="reloadDbBtn">Reload DB</button>
       </div>
-
-      <div class="section-row" style="margin-top:22px">
-        <div class="h2">NASA / Sungrazer Catalogue (recent)</div>
-        <button id="reloadDbBtn" class="btn sm">Reload</button>
-      </div>
-      <div id="dbStatus" class="label" style="text-transform:none;margin:6px 0 10px">Not loaded</div>
-      <div style="overflow:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card);box-shadow:var(--shadow-sm)">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead>
-            <tr style="background:rgba(255,255,255,.04)">
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)">Date</th>
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)">Time</th>
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)">X</th>
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)">Y</th>
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)">Inst</th>
-              <th style="text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)">Notes</th>
-            </tr>
-          </thead>
-          <tbody id="dbTableBody"></tbody>
-        </table>
-      </div>
-
-      <div class="credits">
-        Website designed & managed by
-        <a href="https://nagohcreative.com" target="_blank" rel="noopener">NagohCreative.com</a>
-        in partnership with
-        <a href="https://ournightsky.us" target="_blank" rel="noopener">OurNightSky.US</a>
-      </div>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead style="background:var(--bg-elev);"><tr><th>ID</th><th>Date</th><th>Instrument</th><th>Group</th></tr></thead>
+        <tbody id="dbTableBody"></tbody>
+      </table>
+      <p id="dbStatus" style="color:var(--text-tertiary);font-size:12px;margin-top:8px;">Loading...</p>
     </div>
   </main>
 
-  <div class="modal" id="candidateModal">
-    <div class="modal-card">
-      <div class="modal-h">
-        <div class="h2" style="font-size:18px" id="modalTitle">Candidate Details</div>
-        <button class="btn sm" onclick="closeModal()">Close</button>
-      </div>
-      <div class="modal-b" id="modalBody"></div>
-    </div>
-  </div>
-
   <script>
-    const CONFIG = { repo:'NAGOHUSA/ONS_SOHOHUNTER', ref:'main', folder:'detections' };
-    const GITHUB_API = `https://api.github.com/repos/${CONFIG.repo}/contents/${CONFIG.folder}?ref=${CONFIG.ref}`;
-    const NASA_DB_URL = 'https://comet.nrl.navy.mil/nrlsoho/cometdb.txt';
-    const PAGE_SIZE = 25;
-    const DEBOUNCE_MS = 180;
-
-    const RAW_URL = (path) => {
-      if (!path) return '';
-      let p = String(path).trim().replace(/^\.?\/*/, '');
-      if (p.startsWith('http')) return p;
-      if (p.startsWith(`${CONFIG.folder}/`)) {
-        return `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.ref}/${p}`;
-      }
-      return `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.ref}/${CONFIG.folder}/${p}`;
-    };
-
-    let allCandidates = [], filteredCandidates = [], nasaCatalog = [], allFlaggedAcross = [], reportNames = [];
-    let markedIds = new Set();
-    let visibleCount = PAGE_SIZE;
-    const modalCache = new Map();
+    /* ======================= GLOBALS ======================= */
     const els = {};
+    let reports = [], candidates = [], nasaComets = [], allFlaggedAcross = [];
+    let visibleCount = 30, PAGE_SIZE = 30, filterTimer = null;
 
-    const fmtDateTime = (s) => s ? new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'}) : 'N/A';
-    const toHHMM = (iso) => { if (!iso) return ''; const d=new Date(iso); return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`; };
-    const oneOf = (obj, ...keys) => { for (const k of keys){ const v = obj?.[k]; if (v!==undefined && v!==null && v!=='') return v; } return null; };
-    const normPath = (v) => { if (!v) return ''; const s=String(v).trim(); if (s.startsWith('http')) return s; return RAW_URL(s); };
-    const getTelescope = (c) => (c.instrument || c.detector || c.camera || 'unknown').toUpperCase();
+    /* ======================= UTILS ======================= */
+    const normPath = p => p.startsWith('/') ? p : `/${p}`;
+    const fetchJson = async url => { const r = await fetch(url); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
+    const downloadText = (name, txt) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([txt], {type:'text/plain;charset=utf-8'}));
+      a.download = name; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    };
+    const sungrazerLinesFromPositions = c => c.positions.map(p => {
+      const t = p.time_utc.replace(/[-:TZ]/g,'').slice(0,12);
+      return `${t} ${Math.round(p.x)} ${Math.round(p.y)}`;
+    });
 
-    function isCropLike(p){
-      if(!p) return false;
-      const s = String(p).toLowerCase();
-      return s.includes('/crops/') || s.includes('/crop_') || s.includes('_crop') || s.includes('crop/');
+    /* ======================= DATA LOADING ======================= */
+    async function populateReportSelect() {
+      try {
+        reports = await fetchJson('/detections/reports.json');
+        els.reportSelect.innerHTML = '<option value="">Select Report...</option>' +
+          reports.reports.map(r=>`<option value="${r}">${r.replace('candidates_','').replace('.json','')}</option>`).join('');
+      } catch(e){ console.error(e); }
     }
 
-    async function renderOverlayDataURL(imageURL, positions, imageSize){
-      return new Promise((resolve, reject)=>{
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = ()=>{
-          const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-          const sx = w / ((Array.isArray(imageSize) && imageSize[0]) ? imageSize[0] : 1024);
-          const sy = h / ((Array.isArray(imageSize) && imageSize[1]) ? imageSize[1] : 1024);
-          const cv = document.createElement('canvas');
-          cv.width = w; cv.height = h;
-          const ctx = cv.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
-          if (Array.isArray(positions) && positions.length){
-            ctx.lineWidth = Math.max(1, Math.round(Math.min(w,h)/512));
-            ctx.strokeStyle = 'rgba(255,255,0,0.9)';
-            ctx.fillStyle = 'rgba(0,255,0,0.9)';
-            ctx.beginPath();
-            positions.forEach((p, i)=>{
-              const x = (p.x||p[0]) * sx;
-              const y = (p.y||p[1]) * sy;
-              if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-            });
-            ctx.stroke();
-            positions.forEach((p, i)=>{
-              const x = (p.x||p[0]) * sx;
-              const y = (p.y||p[1]) * sy;
-              ctx.beginPath();
-              ctx.arc(x, y, i===Math.floor(positions.length/2) ? 5 : 3, 0, Math.PI*2);
-              ctx.fill();
-            });
-          }
-          resolve(cv.toDataURL('image/png'));
-        };
-        img.onerror = reject;
-        img.src = imageURL;
-      });
+    async function loadReport(name){
+      if(!name) return;
+      try{
+        candidates = await fetchJson(`/detections/${name}`);
+        candidates.forEach(c=>{
+          c.id = `${c.detector}_${c.series_mid_frame.replace(/\W+/g,'_')}_${c.track_index}`;
+          c.telescope = c.detector;
+          c.label = c.ai_label || 'unknown';
+          c.score = c.ai_score || 0;
+          c.timestamp = c.positions?.[Math.floor(c.positions.length/2)]?.time_utc || '';
+          c.cx = c.positions?.reduce((s,p)=>s+p.x,0)/c.positions?.length || null;
+          c.cy = c.positions?.reduce((s,p)=>s+p.y,0)/c.positions?.length || null;
+          c.bbox = c.bbox || null;
+          c.originalPath = c.original_mid_path;
+          c.annotatedFull = c.annotated_path;
+          c.cropPath = c.crop_path;
+          c.gifCrop = c.crop_gif_path;
+          c.gifAnn = c.annotated_gif_path || '';
+          c.mp4 = c.crop_mp4_path || '';
+          c.reportName = name;
+          c.marked = false;
+        });
+        crossCheckCandidates(); scheduleFilter();
+        els.reportStatus.textContent = `Loaded ${candidates.length} candidates`;
+      }catch(e){ console.error(e); els.reportStatus.textContent='Load failed'; }
     }
 
-    function centroidFromBBox(b){
-      if (!Array.isArray(b) || b.length < 4) return {cx:null, cy:null};
-      const [a,b0,c0,d0] = b.map(Number);
-      if (!Number.isFinite(a)||!Number.isFinite(b0)||!Number.isFinite(c0)||!Number.isFinite(d0)) return {cx:null,cy:null};
-      if (c0 > a && d0 > b0 && (c0 - a) <= 2048 && (d0 - b0) <= 2048){
-        return { cx: Math.round((a + c0) / 2), cy: Math.round((b0 + d0) / 2) };
-      }
-      return { cx: Math.round(a + c0 / 2), cy: Math.round(b0 + d0 / 2) };
-    }
-
-    function normalizeCandidates(raw, reportName=null){
-      const arr = Array.isArray(raw) ? raw : (raw?.candidates || []);
-      return arr.map((c, idx) => {
-        const telescope = getTelescope(c);
-        const id = String(oneOf(c,'id','candidate_id','name') ?? `${telescope}#${c.track_index ?? idx}`);
-
-        const originalPath   = oneOf(c,'original_full_path','original_path','original_mid_path','mid_original','orig_png','png','original');
-        const annotatedFull  = oneOf(c,'annotated_full_path','mid_annotated_full','annotated_full','annot_full');
-        const annotatedPath  = oneOf(c,'annotated_path','paths?.annotated','annotated_mid_path','mid_annotated','annot_png','overlay_png','annotated');
-        const annotatedCrop  = isCropLike(annotatedPath) ? annotatedPath : '';
-        const annotatedFullResolved = annotatedFull || (annotatedPath && !isCropLike(annotatedPath) ? annotatedPath : '');
-        const cropPath       = oneOf(c,'crop_path','paths?.crop','crop_png','crop');
-        const thumbnail      = oneOf(c,'thumbnail_path','thumb','thumbnail') || cropPath || annotatedFull || originalPath || annotatedPath;
-
-        const gifCrop = oneOf(c,'animation_gif_crop','gif_path','gif','mid_gif','crop_gif_path');
-        const gifAnn  = oneOf(c,'animation_gif_ann','gif_annotated','gif_ann');
-        const mp4     = oneOf(c,'mp4_path','mp4','video','mid_mp4','crop_mp4_path');
-
-        const positions = Array.isArray(c.positions) ? c.positions.slice() : [];
-        const bbox = Array.isArray(c.bbox) ? c.bbox : [];
-        let cx = null, cy = null;
-        if (Array.isArray(c.centroid) && c.centroid.length === 2){
-          cx = Math.round(c.centroid[0]); cy = Math.round(c.centroid[1]);
-        } else if (bbox.length >= 4) {
-          const cc = centroidFromBBox(bbox);
-          cx = cc.cx; cy = cc.cy;
-        } 
-        if (cx == null || cy == null) {
-          if (positions.length) {
-            const mid = positions[Math.floor(positions.length / 2)];
-            cx = Math.round(mid.x);
-            cy = Math.round(mid.y);
-          }
-        }
-
-        let timestamp = oneOf(c,'timestamp','t_mid','first_seen','time','t_utc') || '';
-        if (!timestamp && positions.length) {
-          const mid = positions[Math.floor(positions.length / 2)];
-          timestamp = mid.time_utc || '';
-        }
-
-        return {
-          id, telescope,
-          label: String(oneOf(c,'ai_label','label') || 'unknown').toLowerCase(),
-          score: oneOf(c,'ai_score','score') ?? 0,
-          groq_label: (oneOf(c,'groq_label') || '').toLowerCase() || null,
-          groq_score: oneOf(c,'groq_score') ?? null,
-          timestamp,
-          bbox, cx, cy,
-          cropPath: cropPath || '',
-          originalPath: originalPath || '',
-          annotatedFull: annotatedFullResolved || '',
-          annotatedPath: annotatedPath || '',
-          annotatedCrop: annotatedCrop || '',
-          gifCrop: gifCrop || '',
-          gifAnn: gifAnn || '',
-          mp4: mp4 || '',
-          thumbnail: thumbnail || '',
-          positions,
-          imageSize: c.image_size || null,
-          trackIndex: c.track_index ?? idx,
-          official:false,
-          officialInfo:null,
-          reportName,
-          raw:c,
-          matchId:null
-        };
-      });
-    }
-
-    /* ---------- C2 ↔ C3 cross-matching ---------- */
-    const MATCH_TOL_PX = 50;
-    const MATCH_TOL_MS = 12 * 60 * 60 * 1000; // 12 h
-
-    function findCrossMatch(c, pool){
-      if (!c.cx || !c.cy || !c.timestamp) return null;
-      const t0 = new Date(c.timestamp).getTime();
-      const isC2 = c.telescope.includes('C2');
-      const target = isC2 ? 'C3' : 'C2';
-      for (const other of pool){
-        if (!other.telescope.includes(target) || other.id===c.id) continue;
-        if (!other.cx || !other.cy || !other.timestamp) continue;
-        const dt = Math.abs(t0 - new Date(other.timestamp).getTime());
-        if (dt > MATCH_TOL_MS) continue;
-        const dx = Math.abs(c.cx - other.cx);
-        const dy = Math.abs(c.cy - other.cy);
-        if (dx <= MATCH_TOL_PX && dy <= MATCH_TOL_PX) return other.id;
-      }
-      return null;
-    }
-
-    function applyCrossMatches(){
-      const list = (els.cometSelect.value === '__ALLREPORTS__') ? allFlaggedAcross : allCandidates;
-      list.forEach(c => {
-        c.matchId = findCrossMatch(c, list);
+    function crossCheckCandidates(){
+      candidates.forEach(c=>{
+        c.official = nasaComets.some(com=>{
+          const dt = Math.abs(new Date(c.timestamp)-new Date(com.date));
+          return dt<3600000 && com.instrument===c.telescope;
+        });
       });
     }
 
     async function loadNasaCatalog(){
+      els.dbStatus.textContent='Loading...';
       try{
-        const resp = await fetch(NASA_DB_URL);
-        const txt = await resp.text();
-        const rows = txt.split('\n').filter(l=>l.trim() && !l.startsWith('#'));
-        nasaCatalog = rows.map(line=>{
-          const parts = line.trim().split(/\s+/);
-          if (parts.length < 6) return null;
-          const [date, time, x, y, pa, inst, ...notes] = parts;
-          return { date, time, x:parseInt(x), y:parseInt(y), inst:String(inst||'').toUpperCase(), notes:notes.join(' ') };
-        }).filter(Boolean);
-        els.dbStatus.textContent = `Loaded ${nasaCatalog.length} entries`;
-        const tail = nasaCatalog.slice(-50);
-        els.dbTableBody.innerHTML = tail.map(r=>`<tr>
-          <td style="padding:10px 12px;border-bottom:1px solid var(--border)">${r.date}</td>
-          <td style="padding:10px 12px;border-bottom:1px solid var(--border)">${r.time}</td>
-          <td style="padding:10px 12px;border-bottom:1px solid var(--border)">${r.x}</td>
-          <td style="padding:10px 12px;border-bottom:1px solid var(--border)">${r.y}</td>
-          <td style="padding:10px 12px;border-bottom:1px solid var(--border)">${r.inst}</td>
-          <td style="padding:10px 12px;border-bottom:1px solid var(--border)">${r.notes}</td>
-        </tr>`).join('');
-        crossCheckCandidates();
-      }catch(e){
-        els.dbStatus.textContent = 'Failed to load NASA catalogue';
-        console.error(e);
-      }
+        const data = await fetchJson('https://sungrazer.nrl.navy.mil/api/comets?limit=500');
+        nasaComets = data.comets.map(com=>({id:com.id,date:com.discovery_date,instrument:com.instrument,group:com.group}));
+        els.dbTableBody.innerHTML = nasaComets.map(com=>`<tr><td>${com.id}</td><td>${com.date}</td><td>${com.instrument}</td><td>${com.group}</td></tr>`).join('');
+        els.dbStatus.textContent=`Loaded ${nasaComets.length} comets`;
+        crossCheckCandidates(); scheduleFilter();
+      }catch(e){ console.error(e); els.dbStatus.textContent='Load failed'; }
     }
 
-    function crossCheckCandidates(){
-      const tol = 50;
-      const list = (els.cometSelect.value === '__ALLREPORTS__') ? allFlaggedAcross : allCandidates;
-      list.forEach(c=>{
-        const inst = c.telescope.includes('C2') ? 'C2' : c.telescope.includes('C3') ? 'C3' : '';
-        const match = nasaCatalog.find(db=>{
-          if (!inst || db.inst !== inst) return false;
-          if (c.cx==null || c.cy==null) return false;
-          const ct = c.timestamp ? new Date(c.timestamp) : null;
-          const dt = (ct && db.date && db.time) ? Math.abs(ct - new Date(`${db.date}T${db.time}Z`)) : Infinity;
-          if (dt > 12*60*60*1000) return false;
-          return Math.abs(c.cx - db.x) <= tol && Math.abs(c.cy - db.y) <= tol;
-        });
-        c.official = !!match;
-        c.officialInfo = match || null;
-      });
-      applyCrossMatches();
-      updateStats();
-      renderCandidates();
-    }
+    /* ======================= FILTER / RENDER ======================= */
+    function scheduleFilter(){ clearTimeout(filterTimer); filterTimer=setTimeout(renderCandidates,100); }
 
-    async function fetchJSON(url){ 
-      const r=await fetch(url,{cache:'no-store'}); 
-      if(!r.ok) throw new Error(`${r.status} ${r.statusText}`); 
-      return r.json(); 
-    }
-
-    async function listReportsViaAPI(){
-      try{
-        const r = await fetch(GITHUB_API, {headers:{'Accept':'application/vnd.github+json'}});
-        if (!r.ok) throw new Error(`list reports failed: ${r.status}`);
-        const files = await r.json();
-        return (Array.isArray(files)?files:[])
-          .filter(f=>f.name?.startsWith('candidates_') && f.name.endsWith('.json'))
-          .map(f=>f.name)
-          .sort((a,b)=> b.localeCompare(a));
-      }catch(e){
-        console.warn('Report listing failed; continuing with latest pointer only', e);
-        return [];
-      }
-    }
-
-    async function loadLatestPointer(){
-      try{
-        const latest = await fetchJSON(RAW_URL('candidates_latest.json'));
-        const arr = Array.isArray(latest) ? latest : (Array.isArray(latest?.candidates) ? latest.candidates : []);
-        allCandidates = normalizeCandidates(arr, 'candidates_latest.json');
-        return true;
-      }catch(_){ return false; }
-    }
-
-    function chunkedAppendOptions(selectEl, items, labelFn){
-      const frag = document.createDocumentFragment();
-      let i = 0;
-      const step = () => {
-        const end = Math.min(i + 250, items.length);
-        for (; i < end; i++) {
-          const opt = document.createElement('option');
-          opt.value = items[i].value;
-          opt.textContent = labelFn(items[i]);
-          frag.appendChild(opt);
-        }
-        selectEl.appendChild(frag.cloneNode(true));
-        if (i < items.length) {
-          if ('requestIdleCallback' in window) requestIdleCallback(step);
-          else setTimeout(step, 0);
-        }
-      };
-      step();
-    }
-
-    function updateCandidateDropdowns(){
-      const candItems = allCandidates.map(c => ({
-        value: c.id,
-        label: `${c.id} – ${c.label.toUpperCase()} (${isFinite(c.score)?(c.score*100).toFixed(1):'-'}%)`
-      }));
-      els.candidateSelect.innerHTML = '<option value="">All candidates</option>';
-      chunkedAppendOptions(els.candidateSelect, candItems, i => i.label);
-
-      const flagged = allCandidates.filter(c => c.label==='comet' || c.groq_label==='comet');
-      const flaggedItems = flagged.map(c => ({
-        value: c.id,
-        label: `${c.id} – AI ${isFinite(c.score)?(c.score*100).toFixed(0):'-'}%${isFinite(c.groq_score)?` / G ${(c.groq_score*100).toFixed(0)}%` : ''}`
-      }));
-      const keepAllAcross = els.cometSelect.querySelector('option[value="__ALLREPORTS__"]');
-      els.cometSelect.innerHTML = '';
-      if (keepAllAcross) els.cometSelect.appendChild(keepAllAcross);
-      const def = document.createElement('option');
-      def.value = ''; def.textContent = 'All flagged (current report)';
-      els.cometSelect.appendChild(def);
-      chunkedAppendOptions(els.cometSelect, flaggedItems, i => i.label);
-    }
-
-    async function populateReportSelect(){
-      els.reportStatus.innerHTML = '<span class="spinner"></span> Loading reports…';
-      const latestOk = await loadLatestPointer();
-      reportNames = await listReportsViaAPI();
-
-      const opts = [];
-      if (latestOk) opts.push(`<option value="__LATEST__">latest (pointer)</option>`);
-      opts.push(...reportNames.map(name=>{
-        const label = name.replace('candidates_','').replace('.json','');
-        return `<option value="${name}">${label}</option>`;
-      }));
-      els.reportSelect.innerHTML = opts.length ? opts.join('') : '<option value="">No reports found</option>';
-
-      if (latestOk) {
-        els.reportStatus.textContent = 'latest';
-        updateCandidateDropdowns();
-        crossCheckCandidates();
-        applyFilters();
-      } else if (reportNames.length) {
-        await loadReport(reportNames[0]);
-      } else {
-        allCandidates = [];
-        updateCandidateDropdowns();
-        applyFilters();
-      }
-      buildAllFlaggedAcrossReports();
-    }
-
-    async function loadReport(name){
-      if (!name) return;
-      els.reportStatus.innerHTML = '<span class="spinner"></span> Loading…';
-      els.candidatesGrid.innerHTML = '';
-      els.filterCount.textContent = 'Loading…';
-      els.emptyState.style.display = 'none';
-      document.getElementById('loadMoreWrap').style.display = 'none';
-
-      if (name === '__LATEST__') { 
-        const ok = await loadLatestPointer(); 
-        if (ok) els.reportStatus.textContent = 'latest'; 
-        updateCandidateDropdowns(); 
-        crossCheckCandidates(); 
-        applyFilters(); 
-        return; 
-      }
-
-      const url = RAW_URL(name);
-      try{
-        const raw = await fetchJSON(url);
-        allCandidates = normalizeCandidates(raw, name);
-        const label = name.replace('candidates_','').replace('.json','');
-        els.reportStatus.textContent = label;
-        updateCandidateDropdowns();
-        crossCheckCandidates();
-        applyFilters();
-      }catch(e){ 
-        console.error('Fetch failed', url, e); 
-        els.reportStatus.textContent = 'Failed';
-      }
-    }
-
-    async function buildAllFlaggedAcrossReports(){
-      const names = reportNames.slice(0, 60);
-      const batches = await Promise.all(
-        names.map(async n => {
-          try{
-            const r = await fetch(RAW_URL(n), {cache:'no-store'});
-            if (!r.ok) return [];
-            const json = await r.json();
-            return normalizeCandidates(json, n).filter(c => c.label==='comet' || c.groq_label==='comet');
-          }catch(_){ return []; }
-        })
-      );
-      allFlaggedAcross = batches.flat();
-
-      const opt = els.cometSelect.querySelector('option[value="__ALLREPORTS__"]') ||
-                  document.createElement('option');
-      opt.value = '__ALLREPORTS__';
-      opt.textContent = `All flagged (across reports) – ${allFlaggedAcross.length}`;
-      if (!opt.parentNode) els.cometSelect.insertBefore(opt, els.cometSelect.firstChild);
-    }
-
-    let filterTimer;
-    function scheduleFilter(){
-      clearTimeout(filterTimer);
-      filterTimer = setTimeout(applyFilters, DEBOUNCE_MS);
-    }
-
-    function applyFilters(){
-      const fC2 = els.filterC2.checked;
-      const fC3 = els.filterC3.checked;
-      const fComet = els.filterComet.checked;
-      const fMarked = els.filterMarked.checked;
-      const fScore51 = els.filterScore51?.checked;
-      const showNot = els.showNotComet.checked;
-
-      const selAll = els.candidateSelect.value;
-      const selComet = els.cometSelect.value;
-
-      let baseList = allCandidates;
-      if (selComet === '__ALLREPORTS__') baseList = allFlaggedAcross;
-
-      filteredCandidates = baseList.filter(c=>{
-        if (selComet && selComet !== '__ALLREPORTS__' && c.id !== selComet) return false;
-        if (selAll && baseList === allCandidates && c.id !== selAll) return false;
-        if (fC2 && !c.telescope.includes('C2')) return false;
-        if (fC3 && !c.telescope.includes('C3')) return false;
-        if (fComet && c.label !== 'comet') return false;
-        if (fMarked && !markedIds.has(c.id)) return false;
-        if (!showNot && c.label === 'not_comet') return false;
-        if (fScore51){
-          const ai = (typeof c.score==='number' && isFinite(c.score)) ? c.score : null;
-          const gq = (typeof c.groq_score==='number' && isFinite(c.groq_score)) ? c.groq_score : null;
-          if (!((ai!==null && ai >= 0.51) || (gq!==null && gq >= 0.51))) return false;
-        }
-        return true;
-      });
-
-      visibleCount = PAGE_SIZE;
-      renderCandidates();
-      updateStats();
-      els.filterCount.textContent = `Showing ${Math.min(visibleCount, filteredCandidates.length)} of ${filteredCandidates.length}${baseList===allFlaggedAcross?' (all reports)':''}`;
+    function shouldShow(c){
+      if(!els.showNotComet.checked && c.label!=='comet') return false;
+      if(els.filterScore51.checked && c.score<0.51) return false;
+      if(els.filterComet.checked && c.label!=='comet') return false;
+      if(els.filterMarked.checked && !c.marked) return false;
+      const tel = c.telescope.toUpperCase();
+      if(els.filterC2.checked && tel.includes('C2')) return true;
+      if(els.filterC3.checked && tel.includes('C3')) return true;
+      if(els.filterCCOR1.checked && tel.includes('CCOR')) return true;
+      return false;
     }
 
     function renderCandidates(){
-      if (!filteredCandidates.length){
-        els.candidatesGrid.innerHTML = '';
-        els.emptyState.style.display = 'block';
-        document.getElementById('loadMoreWrap').style.display = 'none';
-        return;
-      }
-      els.emptyState.style.display = 'none';
-
-      const slice = filteredCandidates.slice(0, visibleCount);
-      els.candidatesGrid.innerHTML = slice.map(renderCardHTML).join('');
-
-      document.querySelectorAll('.card').forEach(card=>{
-        const id = card.dataset.id;
-        card.querySelector('.mark')?.addEventListener('click', e => { e.stopPropagation(); toggleMark(id); });
-        card.addEventListener('click', () => openModal(id));
-      });
-
-      const wrap = document.getElementById('loadMoreWrap');
-      wrap.style.display = (visibleCount < filteredCandidates.length) ? 'block' : 'none';
+      const filtered = candidates.filter(shouldShow).slice(0,visibleCount);
+      els.filterCount.textContent=`(${filtered.length}/${candidates.length})`;
+      els.emptyState.style.display = filtered.length?'none':'block';
+      els.candidatesGrid.innerHTML = filtered.map(c=>{
+        const highlight = els.highlightOfficial.checked && c.official ? 'border-color:var(--success);' : '';
+        return `<div class="card" style="${highlight}" onclick="markCandidate('${c.id}')">
+          <img src="${normPath(c.cropPath)}" style="width:100%;aspect-ratio:1;object-fit:contain;background:#000;">
+          <div style="padding:10px 12px;">
+            <div style="font-weight:700;">${c.telescope} #${c.track_index}</div>
+            <div style="color:var(--text-secondary);font-size:12px;">Score: ${(c.score*100).toFixed(0)}% • ${c.timestamp}</div>
+          </div></div>`;
+      }).join('');
+      updateStats();
     }
 
-    function renderCardHTML(c){
-      const isMarked = markedIds.has(c.id);
-      const isOfficial = c.official && els.highlightOfficial.checked;
-
-      const thumbPath = c.annotatedFull || c.thumbnail || c.annotatedPath || c.cropPath || c.originalPath;
-      const thumbURL = normPath(thumbPath);
-      const labelCls = (c.label || 'unknown').replace(/\W+/g,'_');
-      const cometBadge = (c.groq_label==='comet' ? ' (Groq)' : '');
-      const animURL = c.mp4 ? normPath(c.mp4) : (c.gifAnn ? normPath(c.gifAnn) : (c.gifCrop ? normPath(c.gifCrop) : ''));
-
-      return `
-        <div class="card" data-id="${c.id}">
-          ${thumbURL?`<div class="thumb"><img src="${thumbURL}" loading="lazy" alt="${c.id}"></div>`:''}
-          ${animURL?`<div class="gif">
-            ${animURL.endsWith('.mp4') ? `<video src="${animURL}" playsinline autoplay muted loop style="width:100%"></video>`
-                                       : `<img src="${animURL}" loading="lazy" alt="Animation">`}
-          </div>`:''}
-          <div class="card-b">
-            <div class="row">
-              <div style="display:flex;flex-direction:column;gap:6px">
-                <div style="font-weight:900">${c.id}</div>
-                <div style="font-size:13px;color:var(--text-secondary)">${c.telescope}</div>
-              </div>
-              <div style="text-align:right">
-                <div class="chip-label ${labelCls} ${isOfficial?'official':''}">
-                  ${c.label.toUpperCase()}${isOfficial?' (Official)':''}${cometBadge}
-                </div>
-                <div style="font:700 12px var(--mono);color:var(--text-secondary);margin-top:6px">
-                  ${isFinite(c.score)?(c.score*100).toFixed(1):'—'}%
-                </div>
-              </div>
-            </div>
-            <div class="meta">
-              <div><div class="k">Track</div>${c.trackIndex ?? '—'}</div>
-              <div><div class="k">Time</div>${fmtDateTime(c.timestamp)}</div>
-              <div><div class="k">Position</div>${(c.cx!=null && c.cy!=null)?`${c.cx}, ${c.cy}`:'—'}</div>
-              <div><div class="k">Image</div>${c.imageSize?`${c.imageSize[0]}×${c.imageSize[1]}`:'—'}</div>
-            </div>
-            <div class="actions">
-              <button class="btn sm mark">${isMarked?'Unmark':'Mark'}</button>
-              <button class="btn sm" onclick="event.stopPropagation(); openModal('${c.id}')">Details</button>
-            </div>
-          </div>
-        </div>`;
-    }
-
-    function toggleMark(id){ 
-      if(markedIds.has(id)) markedIds.delete(id); 
-      else markedIds.add(id); 
-      applyFilters(); 
+    function markCandidate(id){
+      const c = candidates.find(x=>x.id===id);
+      if(c) c.marked = !c.marked;
+      allFlaggedAcross = [...new Set([...allFlaggedAcross, ...(c.marked?[c]:[])])].filter(x=>x.marked);
+      renderCandidates();
     }
 
     function updateStats(){
-      const baseList = (els.cometSelect.value === '__ALLREPORTS__') ? allFlaggedAcross : allCandidates;
-      const t = baseList.length;
-      const comets = baseList.filter(c=>c.label==='comet' || c.groq_label==='comet').length;
-      const c2 = baseList.filter(c=>c.telescope.includes('C2')).length;
-      const c3 = baseList.filter(c=>c.telescope.includes('C3')).length;
-      const m = markedIds.size;
-      const off = baseList.filter(c=>c.official).length;
-      document.getElementById('statTotal').textContent = t;
-      document.getElementById('statComets').textContent = comets;
-      document.getElementById('statC2').textContent = c2;
-      document.getElementById('statC3').textContent = c3;
-      document.getElementById('statMarked').textContent = m;
-      document.getElementById('statOfficial').textContent = off;
+      els.statCandidates.textContent = candidates.length;
+      els.statAIComets.textContent = candidates.filter(c=>c.label==='comet').length;
+      els.statMarked.textContent = candidates.filter(c=>c.marked).length;
+      els.statOfficial.textContent = candidates.filter(c=>c.official).length;
     }
 
-    function sungrazerLinesFromPositions(c){
-      const pts = Array.isArray(c.positions) ? c.positions.slice() : [];
-      pts.sort((a,b)=> String(a.time_utc||'').localeCompare(String(b.time_utc||'')));
-      const lines = [];
-      for (const p of pts){
-        const iso = p.time_utc || c.timestamp || '';
-        const x = Math.round(Number(p.x));
-        const y = Math.round(Number(p.y));
-        if (iso && Number.isFinite(x) && Number.isFinite(y)){
-          lines.push(`${toHHMM(iso)} ${x} ${y}`);
-        }
-      }
-      if (!lines.length && c.timestamp && Number.isFinite(c.cx) && Number.isFinite(c.cy)){
-        lines.push(`${toHHMM(c.timestamp)} ${Math.round(c.cx)} ${Math.round(c.cy)}`);
-      }
-      return lines;
-    }
-
-    async function cacheModalAssets(c){
-      if (modalCache.has(c.id)) return modalCache.get(c.id);
-      const crop = c.cropPath ? normPath(c.cropPath) : (c.annotatedCrop ? normPath(c.annotatedCrop) : '');
-      const annFull = c.annotatedFull ? normPath(c.annotatedFull) : '';
-      const origFull = c.originalPath ? normPath(c.originalPath) : '';
-      let overlayURL = '';
-      if (!annFull && origFull && (c.positions?.length)) {
-        try{ overlayURL = await renderOverlayDataURL(origFull, c.positions, c.imageSize); }
-        catch(_){ overlayURL = origFull; }
-      }
-      const assets = {crop, annFull, origFull, overlayURL};
-      modalCache.set(c.id, assets);
-      return assets;
-    }
-
-    const lazyModalImg = (img) => {
-      if (!img || !img.dataset.src) return;
-      const observer = new IntersectionObserver((entries, obs) => {
-        entries.forEach(e => {
-          if (e.isIntersecting) {
-            img.src = img.dataset.src;
-            obs.unobserve(img);
-          }
-        });
-      }, { rootMargin: '200px' });
-      observer.observe(img);
-    };
-
-    function openModal(id){
-      const pool = (els.cometSelect.value === '__ALLREPORTS__') ? allFlaggedAcross : allCandidates;
-      const c = pool.find(x=>x.id===id) || allCandidates.find(x=>x.id===id);
-      if(!c) return;
-
-      (async () => {
-        const {crop, annFull, origFull, overlayURL} = await cacheModalAssets(c);
-        const firstMode = annFull ? 'annFull' : (origFull ? 'origFull' : 'crop');
-
-        const body = document.getElementById('modalBody');
-        const title = document.getElementById('modalTitle');
-        title.textContent = `Candidate ${c.id}`;
-
-        const officialBlock = c.officialInfo ? `
-          <div style="margin-top:12px;border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(255,255,255,.04)">
-            <strong>Official NASA Record</strong><br/>
-            ${c.officialInfo.date} ${c.officialInfo.time} • X:${c.officialInfo.x} Y:${c.officialInfo.y} • ${c.officialInfo.inst}<br/>
-            ${c.officialInfo.notes}
-          </div>` : '';
-
-        const posRows = (Array.isArray(c.positions) ? c.positions : []).slice()
-          .sort((a,b)=> String(a.time_utc||'').localeCompare(String(b.time_utc||'')))
-          .map(p=>`<tr>
-            <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${toHHMM(p.time_utc||c.timestamp||'')}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${Math.round(p.x)}</td>
-            <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${Math.round(p.y)}</td>
-          </tr>`).join('');
-
-        body.innerHTML = `
-          <div>
-            <div class="seg" id="segToggle">
-              <button data-mode="crop" ${crop?'':'disabled'}>Cropped</button>
-              <button data-mode="annFull" ${annFull||overlayURL?'':'disabled'}>Full Annotated</button>
-              <button data-mode="origFull" ${origFull?'':'disabled'}>Full Original</button>
-              <button data-mode="origPin" ${origFull?'':'disabled'}>Original + Marker</button>
-            </div>
-
-            <div class="bigimg-wrap">
-              <img id="segImg" class="bigimg" data-src="${{crop, annFull, origFull, overlayURL}[firstMode]||''}" alt="view">
-              <div id="segPin"></div>
-            </div>
-
-            ${c.gifAnn||c.gifCrop ? `<img class="bigimg" src="${normPath(c.gifAnn||c.gifCrop)}" loading="lazy">` :
-              c.mp4 ? `<video class="bigimg" src="${normPath(c.mp4)}" playsinline autoplay muted loop></video>` : ''}
-
-            ${officialBlock}
-
-            <div style="margin-top:12px;font-size:14px;color:var(--text-secondary)">
-              <div style="display:grid;grid-template-columns:150px 1fr;gap:8px">
-                <div class="k">Telescope</div><div>${c.telescope}</div>
-                <div class="k">AI Label</div><div>${c.label.toUpperCase()}</div>
-                <div class="k">AI Score</div><div>${isFinite(c.score)?(c.score*100).toFixed(2):'—'}%</div>
-                <div class="k">Timestamp</div><div>${fmtDateTime(c.timestamp)}</div>
-                <div class="k">Track ID</div><div>${c.trackIndex ?? '—'}</div>
-                <div class="k">Image Size</div><div>${c.imageSize?`${c.imageSize[0]}×${c.imageSize[1]}`:'—'}</div>
-                <div class="k">Position</div><div>${(c.cx!=null && c.cy!=null)?`${c.cx}, ${c.cy}`:'—'}</div>
-                ${c.reportName?`<div class="k">Report</div><div>${c.reportName}</div>`:''}
-              </div>
-            </div>
-
-            <div style="margin-top:12px">
-              <div class="k" style="font-size:12px">Positions (HHMM X Y)</div>
-              <div style="overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:6px">
-                <table style="width:100%;border-collapse:collapse;font-size:13px">
-                  <thead>
-                    <tr style="background:rgba(255,255,255,.04)">
-                      <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border)">Time (UTC)</th>
-                      <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border)">X</th>
-                      <th style="text-align:left;padding:8px;border-bottom:1px solid var(--border)">Y</th>
-                    </tr>
-                  </thead>
-                  <tbody>${posRows || `<tr><td colspan="3" style="padding:8px;color:var(--text-tertiary)">No per-frame positions available.</td></tr>`}</tbody>
-                </table>
-              </div>
-            </div>
-
-            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn sm" id="btnExportCandSungrazer">Export Sungrazer (this candidate)</button>
-              <button class="btn sm" id="btnExportCandJSON">Export Package (JSON)</button>
-            </div>
-
-            <div style="margin-top:12px;display:flex;gap:8px">
-              <button class="btn sm" onclick="toggleMark('${c.id}'); closeModal();">Mark/Unmark</button>
-              <button class="btn sm" onclick="closeModal()">Close</button>
-            </div>
-          </div>
-        `;
-
-        const img = body.querySelector('#segImg');
-        lazyModalImg(img);
-
-        const seg = body.querySelector('#segToggle');
-        seg.querySelectorAll('button').forEach(b => {
-          if (b.disabled) return;
-          if (b.dataset.mode === firstMode) b.classList.add('active');
-          b.addEventListener('click', () => {
-            seg.querySelectorAll('button').forEach(x=>x.classList.remove('active'));
-            b.classList.add('active');
-
-            const srcMap = {crop, annFull, origFull, overlayURL};
-            const url = srcMap[b.dataset.mode] || srcMap.origFull || srcMap.crop;
-
-            const pin = body.querySelector('#segPin');
-            pin.style.display = 'none';
-
-            if (b.dataset.mode === 'origPin'){
-              img.onload = () => {
-                const pt = pointAtMidFrame(c);
-                if (pt) positionSegPin(img, pin, pt, c.imageSize);
-              };
-              img.src = origFull;
-            } else {
-              img.src = url;
-            }
-          });
-        });
-
-        body.querySelector('#btnExportCandSungrazer')?.addEventListener('click', () => exportSungrazerSingle(c));
-        body.querySelector('#btnExportCandJSON')?.addEventListener('click', () => exportCandidatePackage(c));
-
-        document.getElementById('candidateModal').classList.add('active');
-      })();
-    }
-
-    function closeModal(){ document.getElementById('candidateModal').classList.remove('active'); }
-
-    function pointAtMidFrame(c){
-      const pos = Array.isArray(c.positions)? c.positions.slice() : [];
-      if (!pos.length) return null;
-      const mid = c.series_mid_frame;
-      if (mid){
-        const hit = pos.find(p=>String(p.frame||p.time||p.time_utc||'').includes(String(mid)));
-        if (hit && Number.isFinite(hit.x) && Number.isFinite(hit.y)) return {x:hit.x,y:hit.y};
-      }
-      const m = pos[Math.floor(pos.length/2)];
-      if (m && Number.isFinite(m.x) && Number.isFinite(m.y)) return {x:m.x,y:m.y};
-      return null;
-    }
-
-    function positionSegPin(imgEl, pinEl, pt, imageSize){
-      if (!imgEl || !pinEl || !pt || !Array.isArray(imageSize)) return;
-      const rect = imgEl.getBoundingClientRect();
-      const scaleX = rect.width / (imageSize[0]||rect.width);
-      const scaleY = rect.height / (imageSize[1]||rect.height);
-      const x = (pt.x||pt.cx||0)*scaleX;
-      const y = (pt.y||pt.cy||0)*scaleY;
-      pinEl.style.left = `${x}px`;
-      pinEl.style.top  = `${y}px`;
-      pinEl.style.display = 'block';
-    }
-
-    function downloadText(filename, text){
-      const blob = new Blob([text], {type:'application/json;charset=utf-8'});
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-    }
-
-    function getExportSelection(){
-      const base = (els.cometSelect.value === '__ALLREPORTS__') ? allFlaggedAcross : allCandidates;
-      return els.exportMarkedOnly.checked ? base.filter(c=>markedIds.has(c.id)) : base;
-    }
-
+    /* ======================= EXPORTS ======================= */
     function exportTXT(){
-      const sel = getExportSelection();
-      const lines = sel.map(c => [c.id, c.telescope, c.label, (c.score*100).toFixed(1)+'%', c.timestamp].join('\t'));
-      const blob = new Blob([lines.join('\n')], {type:'text/plain;charset=utf-8'});
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = 'export.txt'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-    }
-
-    function exportCSV(){
-      const sel = getExportSelection();
-      const header = ['id','telescope','label','score','timestamp','cx','cy','report'].join(',');
-      const rows = sel.map(c=>[
-        `"${c.id}"`,`"${c.telescope}"`,`"${c.label}"`,
-        isFinite(c.score)?c.score.toFixed(3):'',`"${c.timestamp}"`,
-        (c.cx!=null?c.cx:''),(c.cy!=null?c.cy:''),`"${c.reportName||''}"`
-      ].join(','));
-      const blob = new Blob([[header, ...rows].join('\n')], {type:'text/csv;charset=utf-8'});
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = 'export.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-    }
-
-    function exportSungrazer(){
-  const objLine = (els.sungrazerObject.value || 'Kreutz Companion').trim();
-  const instrPref = els.sungrazerInstrument.value;
-
-  let sel = getExportSelection().filter(c => (c.positions?.length || (c.timestamp && c.cx!=null && c.cy!=null)));
-  if (instrPref === 'C2' || instrPref === 'C3'){
-    sel = sel.filter(c => c.telescope.includes(instrPref));
-  }
-  const groups = {};
-  sel.forEach(c=>{
-    const key = (instrPref==='auto')
-      ? (c.telescope.includes('C2')?'C2':(c.telescope.includes('C3')?'C3':'OTHER'))
-      : instrPref;
-    (groups[key]||(groups[key]=[])).push(c);
-  });
-
-  let doc = '';
-  Object.keys(groups).filter(k=>k!=='OTHER').sort().forEach((inst, idx) => {
-    const g = groups[inst].slice().sort((a,b)=> (a.timestamp||'').localeCompare(b.timestamp||''));
-    const first = g[0];
-    const firstDate = first.timestamp ? new Date(first.timestamp).toISOString().split('T')[0] : 'Unknown';
-
-    doc += `Camera: ${inst}\n`;
-    doc += `Image Size: 1024x1024\n`;
-    doc += `Your (0,0) position: Upper Left\n`;
-    doc += `Probable Group: ${objLine}\n`;
-    doc += `Date of FIRST IMAGE: ${firstDate}\n`;
-    doc += `Frames (time_utc, x, y):\n`;
-
-    g.forEach(c => {
-      const lines = sungrazerLinesFromPositions(c);
-      lines.forEach(L => {
-        const [time, x, y] = L.split(' ');
-        const iso = c.timestamp || time;
-        const fullTime = iso.length > 8 ? new Date(iso).toISOString().replace('T', ' ').slice(0, 19) : iso;
-        doc += `  ${fullTime}, ${x}, ${y}\n`;
+      const list = candidates.filter(c=>!els.exportMarkedOnly.checked||c.marked);
+      let txt=''; list.forEach(c=>{
+        txt+=`${c.id}\n${c.timestamp}\n${c.telescope}\nScore: ${c.score}\nPositions:\n`;
+        c.positions.forEach(p=>txt+=`  ${p.time_utc} x:${p.x} y:${p.y}\n`); txt+='\n';
       });
-    });
-
-    if (idx < Object.keys(groups).length - 1) doc += '\n';
-  });
-
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([doc], {type:'text/plain;charset=utf-8'}));
-  a.download = 'sungrazer.txt';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-
-function exportSungrazerSingle(c){
-  const objLine = (els.sungrazerObject.value || 'Kreutz Companion').trim();
-  const inst = c.telescope.includes('C2') ? 'C2' : (c.telescope.includes('C3') ? 'C3' : 'UNKNOWN');
-  const firstDate = c.timestamp ? new Date(c.timestamp).toISOString().split('T')[0] : 'Unknown';
-
-  let doc = `Camera: ${inst}\n`;
-  doc += `Image Size: 1024x1024\n`;
-  doc += `Your (0,0) position: Upper Left\n`;
-  doc += `Probable Group: ${objLine}\n`;
-  doc += `Date of FIRST IMAGE: ${firstDate}\n`;
-  doc += `Frames (time_utc, x, y):\n`;
-
-  const lines = sungrazerLinesFromPositions(c);
-  lines.forEach(L => {
-    const [time, x, y] = L.split(' ');
-    const iso = c.timestamp || time;
-    const fullTime = iso.length > 8 ? new Date(iso).toISOString().replace('T', ' ').slice(0, 19) : iso;
-    doc += `  ${fullTime}, ${x}, ${y}\n`;
-  });
-
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([doc], {type:'text/plain;charset=utf-8'}));
-  a.download = `sungrazer_${c.id.replace(/\W+/g,'_')}.txt`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-
-    function exportSungrazerSingle(c){
-      const objLine = (els.sungrazerObject.value || 'Kreutz Companion').trim();
-      const inst = c.telescope.includes('C2') ? 'C2' : (c.telescope.includes('C3') ? 'C3' : 'UNKNOWN');
-      const lines = sungrazerLinesFromPositions(c);
-      let doc = '1024x1024 images\n' + inst + '\n' + objLine + '\n';
-      if (lines.length) lines.forEach(L => { doc += `${L}\n`; });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([doc], {type:'text/plain;charset=utf-8'}));
-      a.download = `sungrazer_${c.id.replace(/\W+/g,'_')}.txt`;
-      a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+      downloadText('candidates.txt',txt);
+    }
+    function exportCSV(){
+      let csv='ID,Telescope,Score,Timestamp,CX,CY\n';
+      const list = candidates.filter(c=>!els.exportMarkedOnly.checked||c.marked);
+      list.forEach(c=>csv+=`${c.id},${c.telescope},${c.score},${c.timestamp},${c.cx},${c.cy}\n`);
+      downloadText('candidates.csv',csv);
+    }
+    function exportSungrazer(){
+      const list = candidates.filter(c=>!els.exportMarkedOnly.checked||c.marked);
+      let txt=''; list.forEach(c=>{
+        txt+=`== ${c.id} ==\n${els.sungrazerObject.value}\n${c.telescope}\nFirstDate: ${c.timestamp.slice(0,10).replace(/-/g,'')}\nFrames (time_utc, x, y):\n`;
+        sungrazerLinesFromPositions(c).forEach(L=>{
+          const [t,x,y]=L.split(' ');
+          const iso = c.timestamp||t;
+          const ft = iso.length>8?new Date(iso).toISOString().replace('T',' ').slice(0,19):iso;
+          txt+=`  ${ft}, ${x}, ${y}\n`;
+        });
+        txt+='\n';
+      });
+      downloadText('sungrazer_batch.txt',txt);
     }
 
-    function exportCandidatePackage(c){
-      const payload = {
-        id: c.id,
-        telescope: c.telescope,
-        label: c.label,
-        score: c.score,
-        timestamp: c.timestamp,
-        centroid: (Number.isFinite(c.cx)&&Number.isFinite(c.cy)) ? {x:c.cx,y:c.cy} : null,
-        bbox: c.bbox,
-        positions: Array.isArray(c.positions) ? c.positions : [],
-        assets: {
-          original: c.originalPath ? normPath(c.originalPath) : '',
-          annotated_full: c.annotatedFull ? normPath(c.annotatedFull) : '',
-          crop: c.cropPath ? normPath(c.cropPath) : '',
-          gif: c.gifAnn ? normPath(c.gifAnn) : (c.gifCrop ? normPath(c.gifCrop) : ''),
-          mp4: c.mp4 ? normPath(c.mp4) : ''
-        },
-        report: c.reportName || null
-      };
-      downloadText(`candidate_${c.id.replace(/\W+/g,'_')}.json`, JSON.stringify(payload, null, 2));
+    /* ======================= LIVE GIF/VIDEO TOGGLE ======================= */
+    function toggleLiveGif(feedId, btnId, mediaId, tsId){
+      const feed=document.getElementById(feedId), btn=document.getElementById(btnId),
+            media=document.getElementById(mediaId);
+      const hidden = feed.classList.toggle('gif-hidden');
+      const type = mediaId.toLowerCase().includes('video')?'Animation':'GIF';
+      btn.textContent = hidden?`Show ${type}`:`Hide ${type}`;
+      if(!hidden && !media.src) media.src = media.dataset.src;
     }
 
+    /* ======================= TIME ======================= */
     function updateLiveStamps(){
-      const t = new Date();
-      const hh = String(t.getUTCHours()).padStart(2,'0');
-      const mm = String(t.getUTCMinutes()).padStart(2,'0');
+      const t=new Date(), hh=String(t.getUTCHours()).padStart(2,'0'), mm=String(t.getUTCMinutes()).padStart(2,'0');
       els.c2Timestamp.textContent = `${hh}:${mm} UTC`;
       els.c3Timestamp.textContent = `${hh}:${mm} UTC`;
+      els.ccor1Timestamp.textContent = `${hh}:${mm} UTC`;
     }
-
-    function startCountdown(seconds=300){
-      let s = seconds;
-      const tick = ()=>{
-        const m = String(Math.floor(s/60)).padStart(1,'0');
-        const r = String(s%60).padStart(2,'0');
-        els.countdown.textContent = `${m}:${r}`;
-        if (s<=0){ refreshAll(); s=seconds; } else { s--; }
-      };
-      tick(); setInterval(tick, 1000);
+    function startCountdown(sec=300){
+      let s=sec;
+      const tick=()=>{ const m=String(Math.floor(s/60)).padStart(1,'0'), r=String(s%60).padStart(2,'0');
+        els.countdown.textContent=`${m}:${r}`; s<=0?(refreshAll(),s=sec):s--; };
+      tick(); setInterval(tick,1000);
     }
+    function refreshAll(){ const sel=els.reportSelect.value; if(sel) loadReport(sel); updateLiveStamps(); }
 
-    function refreshAll(){
-      const sel = els.reportSelect.value;
-      if (sel) loadReport(sel);
-      updateLiveStamps();
-    }
+    /* ======================= DOM READY ======================= */
+    document.addEventListener('DOMContentLoaded',()=>{
 
-    function toggleLiveGif(feedId, btnId, imgId, tsId){
-      const feed = document.getElementById(feedId);
-      const btn = document.getElementById(btnId);
-      const img = document.getElementById(imgId);
-      const ts = document.getElementById(tsId);
-      const hidden = feed.classList.toggle('gif-hidden');
-      btn.textContent = hidden ? 'Show GIF' : 'Hide GIF';
-      if (!hidden && !img.src) img.src = img.dataset.src || img.getAttribute('src');
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-      Object.assign(els, {
-        reportSelect:      document.getElementById('reportSelect'),
-        candidateSelect:   document.getElementById('candidateSelect'),
-        cometSelect:       document.getElementById('cometSelect'),
-        refreshBtn:        document.getElementById('refreshBtn'),
-        countdown:         document.getElementById('countdown'),
-        exportTxtBtn:      document.getElementById('exportTxtBtn'),
-        exportCsvBtn:      document.getElementById('exportCsvBtn'),
+      /* ---- element cache ---- */
+      Object.assign(els,{
+        reportSelect:document.getElementById('reportSelect'),
+        candidateSelect:document.getElementById('candidateSelect'),
+        cometSelect:document.getElementById('cometSelect'),
+        refreshBtn:document.getElementById('refreshBtn'),
+        countdown:document.getElementById('countdown'),
+        exportTxtBtn:document.getElementById('exportTxtBtn'),
+        exportCsvBtn:document.getElementById('exportCsvBtn'),
         exportSungrazerBtn:document.getElementById('exportSungrazerBtn'),
         exportAllFlaggedBtn:document.getElementById('exportAllFlaggedBtn'),
-        exportMarkedOnly:  document.getElementById('exportMarkedOnly'),
-        sungrazerObject:   document.getElementById('sungrazerObject'),
+        exportMarkedOnly:document.getElementById('exportMarkedOnly'),
+        sungrazerObject:document.getElementById('sungrazerObject'),
         sungrazerInstrument:document.getElementById('sungrazerInstrument'),
-        filterC2:          document.getElementById('filterC2'),
-        filterC3:          document.getElementById('filterC3'),
-        filterComet:       document.getElementById('filterComet'),
-        filterMarked:      document.getElementById('filterMarked'),
-        showNotComet:      document.getElementById('showNotComet'),
-        highlightOfficial: document.getElementById('highlightOfficial'),
-        filterScore51:     document.getElementById('filterScore51'),
-        candidatesGrid:    document.getElementById('candidatesGrid'),
-        filterCount:       document.getElementById('filterCount'),
-        emptyState:        document.getElementById('emptyState'),
-        c2LiveGif:         document.getElementById('c2LiveGif'),
-        c3LiveGif:         document.getElementById('c3LiveGif'),
-        c2Timestamp:       document.getElementById('c2Timestamp'),
-        c3Timestamp:       document.getElementById('c3Timestamp'),
-        reloadDbBtn:       document.getElementById('reloadDbBtn'),
-        dbStatus:          document.getElementById('dbStatus'),
-        dbTableBody:       document.getElementById('dbTableBody'),
-        reportStatus:      document.getElementById('reportStatus')
+        filterC2:document.getElementById('filterC2'),
+        filterC3:document.getElementById('filterC3'),
+        filterCCOR1:document.getElementById('filterCCOR1'),
+        filterComet:document.getElementById('filterComet'),
+        filterMarked:document.getElementById('filterMarked'),
+        showNotComet:document.getElementById('showNotComet'),
+        highlightOfficial:document.getElementById('highlightOfficial'),
+        filterScore51:document.getElementById('filterScore51'),
+        candidatesGrid:document.getElementById('candidatesGrid'),
+        filterCount:document.getElementById('filterCount'),
+        emptyState:document.getElementById('emptyState'),
+        c2LiveGif:document.getElementById('c2LiveGif'),
+        c3LiveGif:document.getElementById('c3LiveGif'),
+        ccor1LiveVideo:document.getElementById('ccor1LiveVideo'),
+        c2Timestamp:document.getElementById('c2Timestamp'),
+        c3Timestamp:document.getElementById('c3Timestamp'),
+        ccor1Timestamp:document.getElementById('ccor1Timestamp'),
+        reloadDbBtn:document.getElementById('reloadDbBtn'),
+        dbStatus:document.getElementById('dbStatus'),
+        dbTableBody:document.getElementById('dbTableBody'),
+        reportStatus:document.getElementById('reportStatus')
       });
 
-      document.getElementById('toggleC2').addEventListener('click', () => toggleLiveGif('feedC2','toggleC2','c2LiveGif','c2Timestamp'));
-      document.getElementById('toggleC3').addEventListener('click', () => toggleLiveGif('feedC3','toggleC3','c3LiveGif','c3Timestamp'));
+      /* ---- live-feed toggles ---- */
+      document.getElementById('toggleC2').addEventListener('click',()=>toggleLiveGif('feedC2','toggleC2','c2LiveGif','c2Timestamp'));
+      document.getElementById('toggleC3').addEventListener('click',()=>toggleLiveGif('feedC3','toggleC3','c3LiveGif','c3Timestamp'));
+      document.getElementById('toggleCCOR1').addEventListener('click',()=>toggleLiveGif('feedCCOR1','toggleCCOR1','ccor1LiveVideo','ccor1Timestamp'));
 
-      els.refreshBtn.addEventListener('click', refreshAll);
-      els.reportSelect.addEventListener('change', e=> loadReport(e.target.value));
-      els.candidateSelect.addEventListener('change', scheduleFilter);
-      els.cometSelect.addEventListener('change', ()=>{ crossCheckCandidates(); scheduleFilter(); });
-      ['filterC2','filterC3','filterComet','filterMarked','showNotComet','highlightOfficial','filterScore51'].forEach(id=>{
-        els[id]?.addEventListener('change', scheduleFilter);
-      });
-      els.exportTxtBtn.addEventListener('click', exportTXT);
-      els.exportCsvBtn.addEventListener('click', exportCSV);
-      els.exportSungrazerBtn.addEventListener('click', exportSungrazer);
-      els.exportAllFlaggedBtn.addEventListener('click', ()=>downloadText('all_flagged_comets.json',
+      /* ---- UI actions ---- */
+      els.refreshBtn.addEventListener('click',refreshAll);
+      els.reportSelect.addEventListener('change',e=>loadReport(e.target.value));
+      els.candidateSelect.addEventListener('change',scheduleFilter);
+      els.cometSelect.addEventListener('change',()=>{crossCheckCandidates();scheduleFilter();});
+      ['filterC2','filterC3','filterCCOR1','filterComet','filterMarked','showNotComet','highlightOfficial','filterScore51']
+        .forEach(id=>els[id]?.addEventListener('change',scheduleFilter));
+      els.exportTxtBtn.addEventListener('click',exportTXT);
+      els.exportCsvBtn.addEventListener('click',exportCSV);
+      els.exportSungrazerBtn.addEventListener('click',exportSungrazer);
+      els.exportAllFlaggedBtn.addEventListener('click',()=>downloadText('all_flagged_comets.json',
         JSON.stringify(allFlaggedAcross.map(c=>({
-          id: c.id, telescope: c.telescope, label: c.label, score: c.score,
-          timestamp: c.timestamp, cx: c.cx, cy: c.cy, report: c.reportName,
-          paths: { original:c.originalPath, annotated_full:c.annotatedFull, crop:c.cropPath, gif_ann:c.gifAnn, gif_crop:c.gifCrop, mp4:c.mp4 }
-        })), null, 2)));
-      els.reloadDbBtn.addEventListener('click', loadNasaCatalog);
-      document.getElementById('btnLoadMore').addEventListener('click', () => {
-        visibleCount += PAGE_SIZE;
-        renderCandidates();
-        document.getElementById('btnLoadMore').scrollIntoView({behavior:'smooth', block:'center'});
+          id:c.id,telescope:c.telescope,label:c.label,score:c.score,
+          timestamp:c.timestamp,cx:c.cx,cy:c.cy,report:c.reportName,
+          paths:{original:c.originalPath,annotated_full:c.annotatedFull,crop:c.cropPath,gif_ann:c.gifAnn,gif_crop:c.gifCrop,mp4:c.mp4}
+        })),null,2)));
+      els.reloadDbBtn.addEventListener('click',loadNasaCatalog);
+      document.getElementById('btnLoadMore').addEventListener('click',()=>{
+        visibleCount+=PAGE_SIZE; renderCandidates();
+        document.getElementById('btnLoadMore').scrollIntoView({behavior:'smooth',block:'center'});
       });
 
+      /* ---- init ---- */
       populateReportSelect();
       loadNasaCatalog();
       updateLiveStamps();
