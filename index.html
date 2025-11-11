@@ -117,7 +117,7 @@
 
     function exportSungrazerSingle(c){
       const objLine = (els.sungrazerObject.value || 'Kreutz Companion').trim();
-      const inst = c.telescope.includes('C2') ? 'C2' : (c.telescope.includes('C3') ? 'C3' : 'UNKNOWN');
+      const inst = c.telescope.includes('C2') ? 'C2' : (c.telescope.includes('C3') ? 'C3' : (c.telescope.includes('CCOR') ? 'CCOR1' : 'UNKNOWN'));
       const lines = sungrazerLinesFromPositions(c);
       let doc = '1024x1024 images\n' + inst + '\n' + objLine + '\n';
       if (lines.length) lines.forEach(L => { doc += `${L}\n`; });
@@ -175,14 +175,14 @@
       updateLiveStamps();
     }
 
-    function toggleLiveGif(feedId, btnId, imgId, tsId){
+    function toggleLiveGif(feedId, btnId, mediaId, tsId){
       const feed = document.getElementById(feedId);
       const btn = document.getElementById(btnId);
-      const img = document.getElementById(imgId);
+      const media = document.getElementById(mediaId);
       const hidden = feed.classList.toggle('gif-hidden');
-      const type = imgId.toLowerCase().includes('video') ? 'Animation' : 'GIF';
+      const type = mediaId.toLowerCase().includes('video') ? 'Animation' : 'GIF';
       btn.textContent = hidden ? `Show ${type}` : `Hide ${type}`;
-      if (!hidden && !img.src) img.src = img.dataset.src || img.getAttribute('src');
+      if (!hidden && !media.src) media.src = media.dataset.src || media.getAttribute('src');
     }
 
     document.addEventListener('DOMContentLoaded', () => {
