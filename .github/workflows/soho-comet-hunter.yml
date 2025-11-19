@@ -2,7 +2,7 @@ name: SOHO Comet Hunter (detect)
 
 on:
   schedule:
-    - cron: "*/30 * * * *" # every 30 minutes
+    - cron: "0 */4 * * *"    # Runs at 0:00, 4:00, 8:00, 12:00, 16:00, 20:00 UTC
   workflow_dispatch:
 
 # Needed for pushes from the workflow
