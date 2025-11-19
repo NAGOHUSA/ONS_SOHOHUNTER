@@ -1,6 +1,11 @@
 name: Train Classifier
 
 on:
+  schedule:
+    - cron: "0 0 * * *"    # Runs once per day at 00:00 UTC (midnight)
+  workflow_dispatch:
+
+on:
   workflow_dispatch: {}
   push:
     paths:
