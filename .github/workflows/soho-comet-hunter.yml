@@ -14,12 +14,13 @@ concurrency:
 
 jobs:
   detect:
-    runs-on: ubuntu-latest-16core   # ← Critical: 38 GB disk instead of 14 GB
-    timeout-minutes: 120             # ← ADD THIS: 2 hour timeout
+    runs-on: ubuntu-latest-16core
+    timeout-minutes: 90
 
     env:
       AI_MIN_SCORE: "0.40"
       DETECTOR_DEBUG: "0"
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - name: Checkout repository
@@ -32,10 +33,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      # ──────────────────────────────────────────────────────────────
-      # BEST-IN-CLASS DISK SPACE SOLUTION (2025 standard for SOHO hunters)
-      # ──────────────────────────────────────────────────────────────
-      - name: Free disk space (including runner diag logs)
+      - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
           tool-cache: true
@@ -43,21 +41,16 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Disable GitHub Actions internal diagnostic logging (prevents Worker_*.log blowup)
+      - name: Disable diagnostic logging
         run: |
           mkdir -p "$HOME/.runner"
           echo '{"disablelog": true}' > "$HOME/.runner/.runner"
 
-      # ──────────────────────────────────────────────────────────────
-      # Additional aggressive cleanup
-      # ──────────────────────────────────────────────────────────────
-      - name: Remove unnecessary system packages
+      - name: Aggressive cleanup
         run: |
           sudo apt-get autoremove -y
           sudo apt-get clean
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
           df -h
 
       - name: Cache pip
@@ -65,43 +58,48 @@ jobs:
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Install Python dependencies (no cache dir → no bloat)
+      - name: Install dependencies
         run: |
+          sudo apt-get update && sudo apt-get install -y jq
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
-      # ──────────────────────────────────────────────────────────────
-      # CRITICAL FIX: Reduce processing window to prevent disk overflow
-      # ──────────────────────────────────────────────────────────────
-      - name: Run comet detector (reduced window)
+      - name: Run comet detector (optimized)
         run: |
           set -euxo pipefail
-          # Reduced from 6 hours to 4 hours, increased step from 12 to 15
-          python detector/detect_comets.py --hours 4 --step-min 15 --out detections > detector.log 2>&1
           
-          # Clean up any large temp files immediately
-          find /tmp -type f -size +50M -delete 2>/dev/null || true
+          echo "=== Starting detection at $(date) ==="
+          df -h
           
-          python detector/ensure_candidates_latest.py > ensure.log 2>&1 || true
+          python detector/detect_comets.py \
+            --hours 2 \
+            --step-min 20 \
+            --out detections \
+            2>&1 | tee detector.log
           
-          # Show disk usage for debugging
+          echo "=== Cleaning up large files ==="
+          find /tmp -type f -size +10M -delete 2>/dev/null || true
+          find . -type f -name "*.fits" -delete 2>/dev/null || true
+          find . -type f -name "*.fits.gz" -delete 2>/dev/null || true
+          
+          df -h
+          
+          echo "=== Ensuring candidates latest ==="
+          python detector/ensure_candidates_latest.py 2>&1 | tee ensure.log || true
+          
+          echo "=== Final disk usage ==="
           df -h
 
-      - name: Upload detector logs as artifact (optional, for debugging)
-        if: always()
+      - name: Upload logs on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: detector-logs
+          name: detector-logs-failure
           path: |
             detector.log
             ensure.log
-          retention-days: 7  # ← Reduce artifact retention
+          retention-days: 3
 
       - name: Update reports manifest
         run: |
@@ -110,24 +108,22 @@ jobs:
           shopt -s nullglob
           latest=$(ls -t candidates_*.json 2>/dev/null | head -n1 || true)
           if [[ -z "${latest:-}" ]]; then
-            echo "No candidates_*.json found; skipping reports.json update."
+            echo "No candidates found; skipping reports.json"
             exit 0
           fi
           printf '%s\n' candidates_*.json \
             | jq -R . \
             | jq -s --arg latest "$latest" '{latest:$latest, reports:.}' > reports.json
 
-      - name: Commit and push new detections
+      - name: Commit and push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
           git add detections
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "No changes to commit"
           else
-            git commit -m "chore(detections): update latest_status + candidates + assets"
+            git commit -m "chore(detections): update $(date -u +%Y-%m-%d_%H:%M)Z"
             git push
           fi
