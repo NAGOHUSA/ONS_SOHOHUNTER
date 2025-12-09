@@ -15,6 +15,7 @@ concurrency:
 jobs:
   detect:
     runs-on: ubuntu-latest-16core   # ← Critical: 38 GB disk instead of 14 GB
+    timeout-minutes: 120             # ← ADD THIS: 2 hour timeout
 
     env:
       AI_MIN_SCORE: "0.40"
@@ -48,8 +49,16 @@ jobs:
           echo '{"disablelog": true}' > "$HOME/.runner/.runner"
 
       # ──────────────────────────────────────────────────────────────
-      # Rest of your pipeline (now safe from disk exhaustion)
+      # Additional aggressive cleanup
       # ──────────────────────────────────────────────────────────────
+      - name: Remove unnecessary system packages
+        run: |
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          df -h
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -67,11 +76,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
-      - name: Run comet detector
+      # ──────────────────────────────────────────────────────────────
+      # CRITICAL FIX: Reduce processing window to prevent disk overflow
+      # ──────────────────────────────────────────────────────────────
+      - name: Run comet detector (reduced window)
         run: |
           set -euxo pipefail
-          python detector/detect_comets.py --hours 6 --step-min 12 --out detections > detector.log 2>&1
+          # Reduced from 6 hours to 4 hours, increased step from 12 to 15
+          python detector/detect_comets.py --hours 4 --step-min 15 --out detections > detector.log 2>&1
+          
+          # Clean up any large temp files immediately
+          find /tmp -type f -size +50M -delete 2>/dev/null || true
+          
           python detector/ensure_candidates_latest.py > ensure.log 2>&1 || true
+          
+          # Show disk usage for debugging
+          df -h
 
       - name: Upload detector logs as artifact (optional, for debugging)
         if: always()
@@ -81,6 +101,7 @@ jobs:
           path: |
             detector.log
             ensure.log
+          retention-days: 7  # ← Reduce artifact retention
 
       - name: Update reports manifest
         run: |
