@@ -10,12 +10,12 @@ permissions:
 
 concurrency:
   group: soho-detect
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   detect:
     runs-on: ubuntu-latest-16core
-    timeout-minutes: 90
+    timeout-minutes: 45  # Reduced from 90 minutes
 
     env:
       AI_MIN_SCORE: "0.40"
@@ -73,8 +73,8 @@ jobs:
           df -h
           
           python detector/detect_comets.py \
-            --hours 2 \
-            --step-min 20 \
+            --hours 1 \
+            --step-min 30 \
             --out detections \
             2>&1 | tee detector.log
           
