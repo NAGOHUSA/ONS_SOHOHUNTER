@@ -1,129 +1,103 @@
 name: SOHO Comet Hunter (detect)
-
 on:
   schedule:
     - cron: "0 */4 * * *"    # Every 4 hours
   workflow_dispatch:
-
 permissions:
   contents: write
-
 concurrency:
   group: soho-detect
-  cancel-in-progress: false
-
+  cancel-in-progress: true  # Changed: Cancel old runs to prevent queue buildup
 jobs:
   detect:
     runs-on: ubuntu-latest-16core
-    timeout-minutes: 45  # Reduced from 90 minutes
-
+    timeout-minutes: 30  # Reduced from 45 - fail fast if stuck
     env:
       AI_MIN_SCORE: "0.40"
       DETECTOR_DEBUG: "0"
       PYTHONUNBUFFERED: "1"
-
+      MAX_IMAGES_PER_RUN: "50"  # NEW: Limit batch size
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
+          fetch-depth: 1  # Changed: Only need latest commit, not full history
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: true
-          large-packages: true
-          docker-images: true
-          swap-storage: false
-
-      - name: Disable diagnostic logging
+          cache: 'pip'  # Built-in pip caching - simpler
+      
+      - name: Free disk space (fast)
         run: |
-          mkdir -p "$HOME/.runner"
-          echo '{"disablelog": true}' > "$HOME/.runner/.runner"
-
-      - name: Aggressive cleanup
-        run: |
-          sudo apt-get autoremove -y
-          sudo apt-get clean
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          # Quick cleanup - don't wait for full tool-cache removal
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
           df -h
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-
+      
       - name: Install dependencies
         run: |
           sudo apt-get update && sudo apt-get install -y jq
-          python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
-
-      - name: Run comet detector (optimized)
+      
+      - name: Run comet detector (limited batch)
         run: |
           set -euxo pipefail
           
           echo "=== Starting detection at $(date) ==="
           df -h
           
+          # CRITICAL FIX: Reduce processing window
           python detector/detect_comets.py \
-            --hours 1 \
-            --step-min 30 \
+            --hours 0.5 \
+            --step-min 15 \
+            --max-images ${MAX_IMAGES_PER_RUN} \
             --out detections \
             2>&1 | tee detector.log
           
-          echo "=== Cleaning up large files ==="
-          find /tmp -type f -size +10M -delete 2>/dev/null || true
+          # Immediate cleanup during run
           find . -type f -name "*.fits" -delete 2>/dev/null || true
           find . -type f -name "*.fits.gz" -delete 2>/dev/null || true
           
           df -h
-          
-          echo "=== Ensuring candidates latest ==="
-          python detector/ensure_candidates_latest.py 2>&1 | tee ensure.log || true
-          
-          echo "=== Final disk usage ==="
-          df -h
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: detector-logs-failure
-          path: |
-            detector.log
-            ensure.log
-          retention-days: 3
-
+      
+      - name: Update candidates
+        run: |
+          python detector/ensure_candidates_latest.py 2>&1 | tee ensure.log
+        continue-on-error: true  # Don't fail entire workflow if this errors
+      
       - name: Update reports manifest
         run: |
           set -euo pipefail
           cd detections
           shopt -s nullglob
-          latest=$(ls -t candidates_*.json 2>/dev/null | head -n1 || true)
-          if [[ -z "${latest:-}" ]]; then
+          latest=$(ls -t candidates_*.json 2>/dev/null | head -n1 || echo "")
+          if [[ -z "$latest" ]]; then
             echo "No candidates found; skipping reports.json"
             exit 0
           fi
           printf '%s\n' candidates_*.json \
             | jq -R . \
             | jq -s --arg latest "$latest" '{latest:$latest, reports:.}' > reports.json
-
+      
       - name: Commit and push
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add detections
-
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
             git commit -m "chore(detections): update $(date -u +%Y-%m-%d_%H:%M)Z"
             git push
           fi
+      
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detector-logs-${{ github.run_number }}
+          path: |
+            detector.log
+            ensure.log
+          retention-days: 2
