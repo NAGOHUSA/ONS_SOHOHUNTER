@@ -1,96 +1,34 @@
-name: Cleanup Storage
-
-on:
-  schedule:
-    # Run daily at 2 AM UTC
-    - cron: '0 2 * * *'
-  workflow_dispatch:  # Allow manual trigger
-  
-jobs:
   cleanup-artifacts:
     name: Delete Old Artifacts
     runs-on: ubuntu-latest
     permissions:
-      actions: write
+      actions: write      # For deletion
       contents: read
     steps:
       - name: Delete artifacts older than 7 days
-        uses: c-hive/gha-remove-artifacts@v1
-        with:
-          age: '7 days'
-          skip-recent: 5
-
-  cleanup-caches:
-    name: Delete Old Caches
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      
-      - name: Cleanup old caches
-        run: |
-          echo "Fetching cache list..."
-          gh extension install actions/gh-actions-cache
-          
-          # Delete caches older than 7 days
-          CACHES=$(gh actions-cache list --limit 100 --sort created-at --order asc | cut -f 1)
-          
-          if [ -z "$CACHES" ]; then
-            echo "No caches to delete"
-          else
-            echo "Deleting old caches..."
-            for cache_id in $CACHES; do
-              echo "Deleting cache: $cache_id"
-              gh actions-cache delete $cache_id --confirm || true
-            done
-          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  cleanup-workflow-runs:
-    name: Delete Old Workflow Runs
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Delete workflow runs older than 30 days
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          retain_days: 30
-          keep_minimum_runs: 10
-
-  cleanup-branches:
-    name: Delete Stale Branches
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: Delete merged branches older than 30 days
         run: |
-          git fetch --all
-          
-          # Get all merged branches except main/master
-          MERGED_BRANCHES=$(git branch -r --merged origin/main | grep -v "main\|master\|HEAD" | sed 's/origin\///' || true)
-          
-          for branch in $MERGED_BRANCHES; do
-            # Check if branch is older than 30 days
-            LAST_COMMIT_DATE=$(git log -1 --format=%ct origin/$branch 2>/dev/null || echo 0)
-            CURRENT_DATE=$(date +%s)
-            AGE_DAYS=$(( (CURRENT_DATE - LAST_COMMIT_DATE) / 86400 ))
-            
-            if [ $AGE_DAYS -gt 30 ]; then
-              echo "Deleting branch: $branch (${AGE_DAYS} days old)"
-              git push origin --delete $branch || true
+          # Compute cutoff timestamp (7 days ago)
+          CUTOFF=$(date -u -d '7 days ago' +%s)
+
+          echo "Deleting artifacts created before $(date -u -d "@$CUTOFF")"
+
+          # List all artifacts (paginated), extract ID and creation timestamp
+          gh api --paginate \
+            repos/${{ github.repository }}/actions/artifacts \
+            --jq '.artifacts[] | "\(.id) \(.created_at)"' |
+          while read -r id created_at; do
+            # Convert created_at to unix timestamp
+            ts=$(date -u -d "$created_at" +%s 2>/dev/null || echo 0)
+
+            if [ "$ts" -lt "$CUTOFF" ]; then
+              echo "Deleting artifact ID $id (created $created_at)"
+              gh api \
+                -X DELETE \
+                repos/${{ github.repository }}/actions/artifacts/$id \
+                || true  # Ignore individual failures
             fi
           done
+
+          echo "Artifact cleanup complete."
