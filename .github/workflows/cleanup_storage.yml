@@ -1,34 +1,122 @@
+name: Cleanup Storage
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
   cleanup-artifacts:
     name: Delete Old Artifacts
     runs-on: ubuntu-latest
     permissions:
-      actions: write      # For deletion
+      actions: write      # Required for deletion
       contents: read
     steps:
       - name: Delete artifacts older than 7 days
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Compute cutoff timestamp (7 days ago)
+          # Compute cutoff timestamp (7 days ago in seconds)
           CUTOFF=$(date -u -d '7 days ago' +%s)
 
-          echo "Deleting artifacts created before $(date -u -d "@$CUTOFF")"
+          echo "Deleting artifacts created before $(date -u -d "@$CUTOFF" '+%Y-%m-%d %H:%M:%S UTC')"
 
-          # List all artifacts (paginated), extract ID and creation timestamp
+          # List all artifacts with pagination, extract ID and created_at
           gh api --paginate \
-            repos/${{ github.repository }}/actions/artifacts \
+            "repos/${{ github.repository }}/actions/artifacts" \
             --jq '.artifacts[] | "\(.id) \(.created_at)"' |
           while read -r id created_at; do
-            # Convert created_at to unix timestamp
+            # Convert artifact creation date to unix timestamp
             ts=$(date -u -d "$created_at" +%s 2>/dev/null || echo 0)
 
             if [ "$ts" -lt "$CUTOFF" ]; then
               echo "Deleting artifact ID $id (created $created_at)"
               gh api \
                 -X DELETE \
-                repos/${{ github.repository }}/actions/artifacts/$id \
-                || true  # Ignore individual failures
+                "repos/${{ github.repository }}/actions/artifacts/$id" \
+                || echo "Failed to delete artifact $id (ignored)"
             fi
           done
 
           echo "Artifact cleanup complete."
+
+  cleanup-caches:
+    name: Delete Old Caches
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cleanup old caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Installing gh actions-cache extension..."
+          gh extension install actions/gh-actions-cache || true
+
+          echo "Fetching list of caches (oldest first)..."
+          # List caches sorted by creation date (asc), limit to a reasonable number
+          CACHE_IDS=$(gh actions-cache list --sort created-at --order asc --limit 500 | cut -f 1)
+
+          if [ -z "$CACHE_IDS" ]; then
+            echo "No caches found."
+            exit 0
+          fi
+
+          echo "Deleting old caches..."
+          for cache_id in $CACHE_IDS; do
+            echo "Deleting cache ID: $cache_id"
+            gh actions-cache delete "$cache_id" --confirm || echo "Failed to delete cache $cache_id (ignored)"
+          done
+
+          echo "Cache cleanup complete."
+
+  cleanup-workflow-runs:
+    name: Delete Old Workflow Runs
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete workflow runs older than 30 days
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 30
+          keep_minimum_runs: 10
+
+  cleanup-branches:
+    name: Delete Stale Branches
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete merged branches older than 30 days
+        run: |
+          git fetch --all --prune
+
+          # Get remote merged branches excluding main/master/HEAD
+          MERGED_BRANCHES=$(git branch -r --merged origin/main | grep -vE "main|master|HEAD" | sed 's|origin/||' || true)
+
+          for branch in $MERGED_BRANCHES; do
+            # Get last commit timestamp on the remote branch
+            LAST_COMMIT_DATE=$(git log -1 --format=%ct "origin/$branch" 2>/dev/null || echo 0)
+            CURRENT_DATE=$(date +%s)
+            AGE_DAYS=$(( (CURRENT_DATE - LAST_COMMIT_DATE) / 86400 ))
+
+            if [ "$AGE_DAYS" -gt 30 ]; then
+              echo "Deleting branch: $branch ($AGE_DAYS days old)"
+              git push origin --delete "$branch" || echo "Failed to delete $branch (ignored)"
+            fi
+          done
