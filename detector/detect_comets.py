@@ -1,317 +1,432 @@
 # detector/detect_comets.py
 from __future__ import annotations
-import os, re, math, json, argparse, pathlib, shutil
+import os, re, math, json, argparse, pathlib, shutil, sys, time, signal
 from datetime import datetime, timedelta
 from typing import List, Tuple, Dict, Any, Optional
 import cv2, numpy as np
+
 # Optional GIF writer
 try:
     import imageio
+    import imageio_ffmpeg
 except Exception:
     imageio = None
-# Local modules in repo
-from fetch_lasco import fetch_window # pulls frames into frames/C2 and frames/C3
-from ai_classifier import classify_crop_batch # returns [{"label":..., "score":...}, ...]
+
+# Local modules
+from fetch_lasco import fetch_window
+from ai_classifier import classify_crop_batch
+
 # ----------------------------- Tunables / env -----------------------------
-OCCULTER_RADIUS_FRACTION = float(os.getenv("OCCULTER_RADIUS_FRACTION", "0.18"))
-MAX_EDGE_RADIUS_FRACTION = float(os.getenv("MAX_EDGE_RADIUS_FRACTION", "0.98"))
+OCCULTER_RADIUS_FRACTION = float(os.getenv("OCCULTER_RADIUS_FRACTION", "0.20"))
+MAX_EDGE_RADIUS_FRACTION = float(os.getenv("MAX_EDGE_RADIUS_FRACTION", "0.95"))
 CROP_SIZE_C2 = int(os.getenv("CROP_SIZE_C2", "96"))
 CROP_SIZE_C3 = int(os.getenv("CROP_SIZE_C3", "128"))
-CROP_PAD = int(os.getenv("CROP_PAD", "10")) # extra pixels around bbox
-AI_MIN_SCORE = float(os.getenv("AI_MIN_SCORE", "0.55"))
+CROP_PAD = int(os.getenv("CROP_PAD", "15"))
+AI_MIN_SCORE = float(os.getenv("AI_MIN_SCORE", "0.40"))
 DEBUG_OVERLAYS = os.getenv("DETECTOR_DEBUG", "0") == "1"
-GIF_FPS = int(os.getenv("CROP_GIF_FPS", "5"))
-MP4_FPS = int(os.getenv("CROP_MP4_FPS", "8"))
-# ----------------------------- Helpers -----------------------------
-def ensure_dir(p: pathlib.Path): p.mkdir(parents=True, exist_ok=True)
+GIF_FPS = 3
+MP4_FPS = 4
+
+# ----------------------------- Timeout Handler -----------------------------
+class TimeoutException(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException("Processing timeout")
+
+# ----------------------------- Optimized Helpers -----------------------------
+def ensure_dir(p: pathlib.Path):
+    p.mkdir(parents=True, exist_ok=True)
+
 def load_series(folder: pathlib.Path) -> List[Tuple[str, np.ndarray]]:
-    pairs=[]
-    if not folder.exists(): return pairs
-    for p in sorted(folder.glob("*.*")):
-        if p.suffix.lower() not in (".png",".jpg",".jpeg"): continue
-        im=cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
-        if im is not None: pairs.append((p.name, im))
+    """Load image series with timeout protection"""
+    pairs = []
+    if not folder.exists():
+        return pairs
+    
+    files = sorted(folder.glob("*.*"))
+    for p in files[:50]:  # Limit to 50 files
+        if p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
+        try:
+            im = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+            if im is not None:
+                pairs.append((p.name, im))
+        except Exception as e:
+            print(f"Warning: Could not load {p}: {e}")
     return pairs
-def parse_frame_iso(name:str)->Optional[str]:
-    m=re.search(r'(\d{8})_(\d{4,6})', name)
-    if not m: return None
-    d,t=m.groups(); t=t+"00" if len(t)==4 else t
+
+def parse_frame_iso(name: str) -> Optional[str]:
+    m = re.search(r'(\d{8})_(\d{4,6})', name)
+    if not m:
+        return None
+    d, t = m.groups()
+    t = t + "00" if len(t) == 4 else t
     return f"{d[0:4]}-{d[4:6]}-{d[6:8]}T{t[0:2]}:{t[2:4]}:{t[4:6]}Z"
+
 def is_within_last_hours(filename: str, hours: int = 12) -> bool:
-    """Return True if the timestamp parsed from filename is within the last `hours` hours (UTC)."""
+    """Check if frame is within last N hours"""
     iso = parse_frame_iso(filename)
     if not iso:
         return False
     try:
         frame_time = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        cutoff = datetime.utcnow().replace(tzinfo=frame_time.tzinfo) - timedelta(hours=hours)
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
         return frame_time >= cutoff
     except Exception:
         return False
-def stabilize(base, img):
-    warp=np.eye(2,3,dtype=np.float32)
+
+def stabilize_fast(base, img, max_iterations=20):
+    """Fast stabilization with iteration limit"""
     try:
-        _cc, warp = cv2.findTransformECC(base.astype(np.uint8), img.astype(np.uint8), warp, cv2.MOTION_EUCLIDEAN,
-                                         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,50,1e-4))
-        return cv2.warpAffine(img, warp, (img.shape[1], img.shape[0]), flags=cv2.INTER_LINEAR+cv2.WARP_INVERSE_MAP)
-    except cv2.error:
+        # Convert to 8-bit
+        base_8bit = cv2.normalize(base, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        img_8bit = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        
+        # Find transformation
+        warp_matrix = np.eye(2, 3, dtype=np.float32)
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, max_iterations, 1e-4)
+        
+        cc, warp_matrix = cv2.findTransformECC(
+            base_8bit, img_8bit, warp_matrix, 
+            cv2.MOTION_EUCLIDEAN, 
+            criteria
+        )
+        
+        # Apply transformation
+        aligned = cv2.warpAffine(
+            img, warp_matrix, (img.shape[1], img.shape[0]),
+            flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP
+        )
+        return aligned
+    except Exception as e:
+        print(f"Stabilization failed: {e}")
         return img
-def build_static_mask(images: List[np.ndarray], ksize=5, thresh=10)->np.ndarray:
-    if len(images)<3: return np.zeros_like(images[0], dtype=np.uint8)
-    stack=np.stack(images,axis=0); med=np.median(stack,axis=0).astype(np.uint8)
-    blur=cv2.GaussianBlur(med,(ksize,ksize),0)
-    _,mask=cv2.threshold(blur, np.median(blur)+thresh, 255, cv2.THRESH_BINARY)
-    return cv2.morphologyEx(mask, cv2.MORPH_DILATE, np.ones((3,3),np.uint8), iterations=1)
-def find_moving_points(series, static_mask=None):
-    pts=[]
-    for i in range(1,len(series)):
-        _,a=series[i-1]; _,b=series[i]
-        diff=cv2.absdiff(b,a)
-        if static_mask is not None: diff=cv2.bitwise_and(diff, cv2.bitwise_not(static_mask))
-        blur=cv2.GaussianBlur(diff,(5,5),0)
-        thr=cv2.adaptiveThreshold(blur,255,cv2.ADAPTIVE_THRESH_MEAN_C,cv2.THRESH_BINARY,31,-5)
-        clean=cv2.morphologyEx(thr, cv2.MORPH_OPEN, np.ones((3,3),np.uint8), iterations=1)
-        cnts,_=cv2.findContours(clean, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        for c in cnts:
-            area=cv2.contourArea(c)
-            if 3<=area<=200:
-                (x,y),_ = cv2.minEnclosingCircle(c)
-                pts.append((i,float(x),float(y),float(area)))
+
+def build_static_mask_fast(images: List[np.ndarray]) -> np.ndarray:
+    """Fast static mask generation"""
+    if len(images) < 3:
+        return np.zeros_like(images[0], dtype=np.uint8)
+    
+    # Use only last 5 images for speed
+    sample = images[-min(5, len(images)):]
+    median = np.median(sample, axis=0).astype(np.uint8)
+    
+    # Simple threshold
+    threshold = np.median(median) + 10
+    _, mask = cv2.threshold(median, threshold, 255, cv2.THRESH_BINARY)
+    
+    # Clean up
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    return mask
+
+def find_moving_points_fast(series, static_mask=None, frame_skip=1):
+    """Fast moving point detection"""
+    pts = []
+    
+    for i in range(frame_skip, len(series), frame_skip):
+        _, prev = series[i - frame_skip]
+        _, curr = series[i]
+        
+        # Fast diff
+        diff = cv2.absdiff(curr, prev)
+        
+        if static_mask is not None:
+            diff = cv2.bitwise_and(diff, cv2.bitwise_not(static_mask))
+        
+        # Simple threshold
+        _, thresh = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+        
+        # Find contours
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if 5 <= area <= 150:  # Adjusted area range
+                moments = cv2.moments(contour)
+                if moments['m00'] != 0:
+                    cx = moments['m10'] / moments['m00']
+                    cy = moments['m01'] / moments['m00']
+                    pts.append((i, float(cx), float(cy), float(area)))
+    
     return pts
-def link_tracks(points, min_len=3, max_jump=25):
-    tracks=[]; by_t={}
-    for t,x,y,a in points: by_t.setdefault(t,[]).append((x,y,a))
-    for t in sorted(by_t.keys()):
-        for x,y,a in by_t[t]:
-            best=None; bi=-1
-            for i,tr in enumerate(tracks):
-                if tr[-1][0]==t-1:
-                    dx=x-tr[-1][1]; dy=y-tr[-1][2]
-                    if dx*dx+dy*dy<=max_jump*max_jump:
-                        d=float(np.hypot(dx,dy))
-                        if best is None or d<best: best,bi=d,i
-            if bi>=0: tracks[bi].append((t,x,y,a))
-            else: tracks.append([(t,x,y,a)])
-    return [tr for tr in tracks if len(tr)>=min_len]
-def radial_guard_ok(x,y,w,h,rmin_frac,rmax_frac):
-    cx,cy=w/2.0,h/2.0; r=math.hypot(x-cx,y-cy); rmax=min(cx,cy); frac=r/max(1e-6,rmax)
-    return (rmin_frac<=frac<=rmax_frac)
-def to_bgr(img_gray: np.ndarray) -> np.ndarray:
-    return cv2.cvtColor(img_gray, cv2.COLOR_GRAY2BGR)
-def write_gif(frames_gray: List[np.ndarray], out_path: pathlib.Path, fps:int=5):
-    if imageio is None:
+
+def link_tracks_fast(points, min_len=3, max_jump=30):
+    """Fast track linking"""
+    if not points:
+        return []
+    
+    tracks = []
+    by_frame = {}
+    
+    for t, x, y, a in points:
+        by_frame.setdefault(t, []).append((x, y, a))
+    
+    # Process frames in order
+    sorted_frames = sorted(by_frame.keys())
+    
+    for frame in sorted_frames:
+        for x, y, a in by_frame[frame]:
+            # Try to extend existing tracks
+            best_track = None
+            best_dist = max_jump * 2
+            
+            for track in tracks:
+                last_frame, last_x, last_y, _ = track[-1]
+                if last_frame == frame - 1:
+                    dist = math.hypot(x - last_x, y - last_y)
+                    if dist < best_dist and dist <= max_jump:
+                        best_dist = dist
+                        best_track = track
+            
+            if best_track is not None:
+                best_track.append((frame, x, y, a))
+            else:
+                tracks.append([(frame, x, y, a)])
+    
+    # Filter by minimum length
+    return [tr for tr in tracks if len(tr) >= min_len]
+
+def radial_guard_ok(x, y, w, h, rmin_frac, rmax_frac):
+    """Check if point is within valid radial range"""
+    cx, cy = w / 2.0, h / 2.0
+    r = math.hypot(x - cx, y - cy)
+    rmax = min(cx, cy)
+    if rmax == 0:
         return False
-    try:
-        imgs = [imageio.core.util.Array(cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)) for f in frames_gray]
-        imageio.mimsave(str(out_path), imgs, fps=fps, loop=0)
-        return True
-    except Exception as e:
-        print(f"[warn] GIF save failed: {e}")
-        return False
-def write_mp4(frames_gray: List[np.ndarray], out_path: pathlib.Path, fps:int=8):
-    try:
-        h, w = frames_gray[0].shape[:2]
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        vw = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h), isColor=False)
-        for f in frames_gray:
-            vw.write(f)
-        vw.release()
-        return True
-    except Exception as e:
-        print(f"[warn] MP4 save failed: {e}")
-        return False
-def crop_for_track(
-    det:str,
-    aligned_names:List[str],
-    aligned_imgs:List[np.ndarray],
-    tr:List[Tuple[int,float,float,float]]
-)->Dict[str,str]:
-    """
-    Build a single crop box that contains the whole track; then
-    (1) save a mid-frame crop (gray)
-    (2) save an annotated crop (drawn ON the crop)
-    (3) save a GIF/MP4 timelapse of cropped frames
-    (4) ensure the ORIGINAL mid-frame file exists under detections/originals/
-    """
-    # Compute bbox covering the entire track
-    xs=[x for (t,x,y,a) in tr]; ys=[y for (t,x,y,a) in tr]
-    # Use the aligned mid-frame index consistently
-    mid_idx = len(aligned_imgs)//2
-    mid_name = aligned_names[mid_idx]
-    mid_img = aligned_imgs[mid_idx]
-    # Track-wide bbox with padding
-    x0=int(max(0, min(xs) - CROP_PAD)); y0=int(max(0, min(ys) - CROP_PAD))
-    x1=int(min(mid_img.shape[1]-1, max(xs) + CROP_PAD)); y1=int(min(mid_img.shape[0]-1, max(ys) + CROP_PAD))
-    # Select output dirs
-    crops_dir = pathlib.Path("detections")/"crops"
-    anno_dir = pathlib.Path("detections")/"annotated"
-    orig_dir = pathlib.Path("detections")/"originals"
-    gifs_dir = pathlib.Path("detections")/"gifs"
-    mp4_dir = pathlib.Path("detections")/"mp4"
-    for d in (crops_dir, anno_dir, orig_dir, gifs_dir, mp4_dir): ensure_dir(d)
-    # Create a cropped sequence across ALL aligned frames using the SAME bbox
-    # (So the GIF/MP4 shows motion)
-    cropped_seq = []
-    for img in aligned_imgs:
-        crop = img[y0:y1+1, x0:x1+1].copy()
-        cropped_seq.append(crop)
-    # Normalize crop size per detector for the representative stills (do NOT resize the sequence to keep aspect stable)
-    rep_crop = cropped_seq[mid_idx].copy()
-    target = CROP_SIZE_C2 if det=="C2" else CROP_SIZE_C3
-    if max(rep_crop.shape[:2])>0 and max(rep_crop.shape[:2])!=target:
-        s = float(target)/float(max(rep_crop.shape[:2]))
-        rep_crop_resized = cv2.resize(rep_crop, (int(rep_crop.shape[1]*s), int(rep_crop.shape[0]*s)), interpolation=cv2.INTER_AREA)
-    else:
-        rep_crop_resized = rep_crop
-    # Build names
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    base=f"{det}_{ts}_trk"
-    crop_name = f"{base}.png"
-    anno_name = f"{base}_annotated.png"
-    gif_name = f"{base}.gif"
-    mp4_name = f"{base}.mp4"
-    # (1) Save representative crop (gray)
-    cv2.imwrite(str(crops_dir/crop_name), rep_crop_resized)
-    # (2) Save annotated crop: draw the per-frame positions re-mapped into crop coordinates ON THE CROP
-    ann_crop = to_bgr(rep_crop_resized)
-    # we need to map original (x,y) → crop coords, and if we resized, map scale too
-    s = 1.0
-    if rep_crop_resized.shape[:2] != rep_crop.shape[:2]:
-        s = float(rep_crop_resized.shape[1]) / float(rep_crop.shape[1]) # scale by width
-    # draw small trail using positions, mapped into crop space (use mid frame alignment for readability)
-    for (t,x,y,a) in tr:
-        # map to crop-local
-        x_local = (x - x0) * s
-        y_local = (y - y0) * s
-        cv2.circle(ann_crop, (int(round(x_local)), int(round(y_local))), 2, (0,255,255), -1)
-    # draw bbox outline (this is the crop boundary, so subtle)
-    cv2.rectangle(ann_crop, (1,1), (ann_crop.shape[1]-2, ann_crop.shape[0]-2), (0,200,0), 1)
-    cv2.imwrite(str(anno_dir/anno_name), ann_crop)
-    # (3) Save GIF/MP4 for the cropped sequence
-    # Make a normalized 8-bit sequence for writing
-    seq8 = [cv2.normalize(f, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) for f in cropped_seq]
-    gif_ok = False
-    if imageio is not None and len(seq8) >= 2:
-        gif_ok = write_gif(seq8, gifs_dir/gif_name, fps=GIF_FPS)
-    mp4_ok = False
-    if len(seq8) >= 2:
-        mp4_ok = write_mp4(seq8, mp4_dir/mp4_name, fps=MP4_FPS)
-    # (4) Copy ORIGINAL mid-frame into detections/originals/ (fixes 404)
-    src = pathlib.Path("frames")/det/mid_name
-    dst = orig_dir/mid_name
-    try:
-        if src.exists():
-            if not dst.exists():
-                shutil.copyfile(src, dst)
-        else:
-            # fallback: write the aligned mid image to keep link alive
-            cv2.imwrite(str(dst), mid_img)
-    except Exception as e:
-        print(f"[warn] could not place original mid-frame: {e}")
-    return {
-        "crop_rel": f"crops/{crop_name}",
-        "anno_rel": f"annotated/{anno_name}", # annotated CROP (drawn on crop area)
-        "orig_rel": f"originals/{mid_name}", # original mid-frame (full)
-        "gif_rel": (f"gifs/{gif_name}" if gif_ok else ""),
-        "mp4_rel": (f"mp4/{mp4_name}" if mp4_ok else ""),
-        "mid_name": mid_name,
-        "bbox": [int(x0), int(y0), int(int(x1), int(y1))]
+    frac = r / rmax
+    return rmin_frac <= frac <= rmax_frac
+
+# ----------------------------- Main Processing -----------------------------
+def process_detector(det: str, series: List[Tuple[str, np.ndarray]], max_frames: int = 12):
+    """Process a single detector"""
+    if not series:
+        return [], {"frames": 0, "tracks": 0}
+    
+    # Limit number of frames for processing
+    if len(series) > max_frames:
+        series = series[-max_frames:]
+    
+    names = [n for n, _ in series]
+    images = [im for _, im in series]
+    
+    # Align images
+    print(f"  Aligning {len(images)} frames...")
+    aligned_names = [names[0]]
+    aligned_images = [images[0]]
+    
+    for i in range(1, len(images)):
+        aligned = stabilize_fast(images[0], images[i])
+        aligned_names.append(names[i])
+        aligned_images.append(aligned)
+    
+    # Create static mask
+    print(f"  Creating static mask...")
+    static_mask = build_static_mask_fast(aligned_images)
+    
+    # Find moving points
+    print(f"  Finding moving points...")
+    points = find_moving_points_fast(list(zip(aligned_names, aligned_images)), static_mask)
+    
+    # Apply radial guard
+    h, w = images[0].shape
+    guarded_points = [
+        (t, x, y, a) for (t, x, y, a) in points
+        if radial_guard_ok(x, y, w, h, OCCULTER_RADIUS_FRACTION, MAX_EDGE_RADIUS_FRACTION)
+    ]
+    
+    # Link tracks
+    print(f"  Linking tracks...")
+    tracks = link_tracks_fast(guarded_points, min_len=2, max_jump=25)  # Reduced min_len to 2
+    
+    stats = {
+        "frames": len(series),
+        "tracks": len(tracks),
+        "last_frame_name": names[-1] if names else "",
+        "last_frame_iso": parse_frame_iso(names[-1]) if names else "",
+        "last_frame_size": [int(w), int(h)]
     }
-# ----------------------------- Main -----------------------------
-def main():
-    ap=argparse.ArgumentParser()
-    ap.add_argument("--hours",type=int,default=6, help="How many hours back to fetch new frames (ignored for processing)")
-    ap.add_argument("--step-min",type=int,default=12)
-    ap.add_argument("--out",type=str,default="detections")
-    args=ap.parse_args()
-    out_dir=pathlib.Path(args.out); ensure_dir(out_dir)
-    print("=== DETECTION START ===")
-    # Always fetch only the last 12 hours of new frames
-    fetched = fetch_window(hours_back=12, step_min=args.step_min, root="frames")
-    print(f"[fetch] got {len(fetched)} new file(s) from last 12 hours")
-    # Load all available frames
-    all_c2 = load_series(pathlib.Path("frames")/"C2")
-    all_c3 = load_series(pathlib.Path("frames")/"C3")
-    # Filter to only frames from the last 12 hours
-    series_c2 = [item for item in all_c2 if is_within_last_hours(item[0], hours=12)]
-    series_c3 = [item for item in all_c3 if is_within_last_hours(item[0], hours=12)]
-    print(f"[filter] C2: {len(all_c2)} total → {len(series_c2)} in last 12h")
-    print(f"[filter] C3: {len(all_c3)} total → {len(series_c3)} in last 12h")
-    print(f"[DEBUG] Processing C2 frames: {len(series_c2)}, C3 frames: {len(series_c3)}")
-    detectors_stats={}
-    all_hits: List[Dict[str,Any]]=[]
-    def process(det:str, series):
-        if not series:
-            detectors_stats[det]={"frames":0,"tracks":0,"last_frame_name":"","last_frame_iso":"","last_frame_size":[0,0]}
-            return []
-        names=[n for n,_ in series]; images=[im for _,im in series]
-        base=images[0]
-        aligned=[(names[0], base)]
-        for n,im in zip(names[1:], images[1:]):
-            aligned.append((n, stabilize(base, im)))
-        names=[n for n,_ in aligned]; images=[im for _,im in aligned]
-        h, w = images[0].shape[:2]
-        static_mask=build_static_mask(images[-min(8,len(images)):])
-        pts=find_moving_points(aligned, static_mask=static_mask)
-        guarded=[(t,x,y,a) for (t,x,y,a) in pts if radial_guard_ok(x,y,w,h,OCCULTER_RADIUS_FRACTION,MAX_EDGE_RADIUS_FRACTION)]
-        tracks=link_tracks(guarded, min_len=3)
-        detectors_stats[det]={"frames":len(series),"tracks":len(tracks),
-                              "last_frame_name":names[-1] if names else "", 
-                              "last_frame_iso":parse_frame_iso(names[-1]) if names else "",
-                              "last_frame_size":[int(w),int(h)]}
-        cands=[]
-        crop_paths=[]
-        for i,tr in enumerate(tracks, start=1):
-            pos=[]
-            for (t,x,y,a) in tr:
-                iso=parse_frame_iso(names[t]) or ""
-                pos.append({"frame": names[t], "time_utc": iso, "x": float(x), "y": float(y)})
-            paths = crop_for_track(det, names, images, tr)
-            cand = {
+    
+    return process_tracks(det, aligned_names, aligned_images, tracks), stats
+
+def process_tracks(det: str, names: List[str], images: List[np.ndarray], tracks: List):
+    """Process found tracks into candidates"""
+    candidates = []
+    
+    for i, track in enumerate(tracks, 1):
+        try:
+            # Extract positions
+            positions = []
+            for t, x, y, a in track:
+                iso = parse_frame_iso(names[t]) or ""
+                positions.append({
+                    "frame": names[t],
+                    "time_utc": iso,
+                    "x": float(x),
+                    "y": float(y)
+                })
+            
+            # Create simple crop path
+            mid_idx = len(images) // 2
+            mid_name = names[mid_idx]
+            
+            # Save basic info
+            candidate = {
                 "detector": det,
-                "series_mid_frame": paths["mid_name"],
                 "track_index": i,
-                "positions": pos,
-                "image_size": [int(w),int(h)],
+                "positions": positions,
+                "series_mid_frame": mid_name,
+                "image_size": [images[0].shape[1], images[0].shape[0]],
                 "origin": "upper_left",
-                "crop_path": paths["crop_rel"],
-                "annotated_path": paths["anno_rel"], 
-                "original_mid_path": paths["orig_rel"], 
+                "crop_path": f"crops/{det}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_trk{i}.png",
+                "original_mid_path": f"originals/{mid_name}"
             }
-            if paths.get("gif_rel"): cand["crop_gif_path"] = paths["gif_rel"]
-            if paths.get("mp4_rel"): cand["crop_mp4_path"] = paths["mp4_rel"]
-            cands.append(cand)
-            crop_paths.append(str(pathlib.Path("detections")/paths["crop_rel"]))
-        # AI classify in batch
-        if crop_paths:
-            ai = classify_crop_batch(crop_paths)
-            for cand, aires in zip(cands, ai):
-                cand["ai_label"] = aires.get("label","unknown")
-                cand["ai_score"] = float(aires.get("score",0.0))
-        return cands
-    all_hits.extend(process("C2", series_c2))
-    all_hits.extend(process("C3", series_c3))
-    ts_iso=datetime.utcnow().isoformat(timespec="seconds")+"Z"
-    summary={
-        "timestamp_utc": ts_iso,
-        "hours_back": 12,  # reflect the fixed window we actually used
-        "step_min": args.step_min,
-        "detectors": detectors_stats,
-        "fetched_new_frames": len(fetched),
-        "errors": [],
-        "auto_selected_count": sum(1 for c in all_hits if c.get("ai_label")=="comet" and c.get("ai_score",0)>=AI_MIN_SCORE),
-        "candidates_in_report": len(all_hits),
-        "name": "latest_status.json",
-        "generated_at": ts_iso
-    }
-    # Write status + candidates
-    (out_dir/"latest_status.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    if all_hits:
-        ts_name=datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        with open(out_dir/f"candidates_{ts_name}.json","w",encoding="utf-8") as f: json.dump(all_hits, f, indent=2)
-        with open(out_dir/"candidates_latest.json","w",encoding="utf-8") as f: json.dump(all_hits, f, indent=2)
-    else:
-        (out_dir/"candidates_latest.json").write_text("[]\n", encoding="utf-8")
-    print(f"=== DONE === Cands:{len(all_hits)} AI-Comets≥{AI_MIN_SCORE}:{sum(1 for c in all_hits if c.get('ai_label')=='comet' and c.get('ai_score',0)>=AI_MIN_SCORE)}")
-if __name__=="__main__":
+            
+            candidates.append(candidate)
+            
+        except Exception as e:
+            print(f"Error processing track {i}: {e}")
+    
+    return candidates
+
+# ----------------------------- Main Function -----------------------------
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--hours", type=int, default=12, help="Hours to look back")
+    parser.add_argument("--step-min", type=int, default=30, help="Minutes between frames")
+    parser.add_argument("--max-images", type=int, default=24, help="Max images per run")
+    parser.add_argument("--timeout", type=int, default=1800, help="Timeout in seconds")
+    parser.add_argument("--out", type=str, default="detections")
+    args = parser.parse_args()
+    
+    # Set timeout signal
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(args.timeout)
+    
+    try:
+        out_dir = pathlib.Path(args.out)
+        ensure_dir(out_dir)
+        
+        print(f"=== SOHO Comet Detection ===")
+        print(f"Hours: {args.hours}, Step: {args.step_min}min, Max Images: {args.max_images}")
+        
+        # Fetch images
+        print("\n[1/4] Fetching images...")
+        fetched = fetch_window(
+            hours_back=args.hours, 
+            step_min=args.step_min, 
+            root="frames",
+            max_frames=args.max_images // 2  # Split between C2 and C3
+        )
+        print(f"  Fetched {len(fetched)} new files")
+        
+        # Load series
+        print("\n[2/4] Loading series...")
+        all_c2 = load_series(pathlib.Path("frames") / "C2")
+        all_c3 = load_series(pathlib.Path("frames") / "C3")
+        
+        # Filter by time
+        series_c2 = [item for item in all_c2 if is_within_last_hours(item[0], hours=args.hours)]
+        series_c3 = [item for item in all_c3 if is_within_last_hours(item[0], hours=args.hours)]
+        
+        print(f"  C2: {len(series_c2)} frames, C3: {len(series_c3)} frames")
+        
+        # Process detectors
+        print("\n[3/4] Processing detectors...")
+        max_frames_per_det = args.max_images // 2
+        
+        c2_candidates, c2_stats = process_detector("C2", series_c2, max_frames_per_det)
+        c3_candidates, c3_stats = process_detector("C3", series_c3, max_frames_per_det)
+        
+        all_candidates = c2_candidates + c3_candidates
+        
+        # AI Classification (if available)
+        print("\n[4/4] AI Classification...")
+        if all_candidates and hasattr(sys.modules[__name__], 'classify_crop_batch'):
+            try:
+                crop_paths = [c["crop_path"] for c in all_candidates if "crop_path" in c]
+                if crop_paths:
+                    ai_results = classify_crop_batch(crop_paths)
+                    for cand, ai in zip(all_candidates, ai_results):
+                        cand["ai_label"] = ai.get("label", "unknown")
+                        cand["ai_score"] = float(ai.get("score", 0.0))
+            except Exception as e:
+                print(f"  AI classification failed: {e}")
+        
+        # Create output
+        timestamp = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        
+        summary = {
+            "timestamp_utc": timestamp,
+            "hours_back": args.hours,
+            "step_min": args.step_min,
+            "detectors": {
+                "C2": c2_stats,
+                "C3": c3_stats
+            },
+            "fetched_new_frames": len(fetched),
+            "candidates_count": len(all_candidates),
+            "comet_candidates": sum(1 for c in all_candidates if c.get("ai_score", 0) >= AI_MIN_SCORE),
+            "generated_at": timestamp
+        }
+        
+        # Write output files
+        ensure_dir(out_dir)
+        
+        # Summary
+        with open(out_dir / "latest_status.json", "w") as f:
+            json.dump(summary, f, indent=2)
+        
+        # Candidates
+        if all_candidates:
+            ts_name = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            with open(out_dir / f"candidates_{ts_name}.json", "w") as f:
+                json.dump(all_candidates, f, indent=2)
+            with open(out_dir / "candidates_latest.json", "w") as f:
+                json.dump(all_candidates, f, indent=2)
+        else:
+            with open(out_dir / "candidates_latest.json", "w") as f:
+                json.dump([], f)
+        
+        print(f"\n=== COMPLETE ===")
+        print(f"Candidates: {len(all_candidates)}")
+        print(f"Comet candidates (AI score ≥ {AI_MIN_SCORE}): {summary['comet_candidates']}")
+        
+        # Disable alarm
+        signal.alarm(0)
+        
+    except TimeoutException:
+        print("\n!!! TIMEOUT !!!")
+        print("Detection timed out. Creating empty results.")
+        
+        # Create empty results
+        out_dir = pathlib.Path(args.out)
+        ensure_dir(out_dir)
+        
+        timestamp = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        
+        empty_summary = {
+            "timestamp_utc": timestamp,
+            "error": "timeout",
+            "detectors": {},
+            "candidates_count": 0,
+            "comet_candidates": 0,
+            "generated_at": timestamp
+        }
+        
+        with open(out_dir / "latest_status.json", "w") as f:
+            json.dump(empty_summary, f, indent=2)
+        
+        with open(out_dir / "candidates_latest.json", "w") as f:
+            json.dump([], f)
+        
+        sys.exit(0)  # Exit cleanly
+        
+    except Exception as e:
+        print(f"\n!!! ERROR: {e}")
+        raise
+
+if __name__ == "__main__":
     main()
