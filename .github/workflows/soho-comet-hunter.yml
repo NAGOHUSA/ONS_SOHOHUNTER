@@ -1,46 +1,67 @@
-name: Test SOHO Detection
-on: workflow_dispatch
+name: SOHO Comet Hunter
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: soho-detect
+  cancel-in-progress: true
 
 jobs:
-  test:
+  detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    
+    timeout-minutes: 30
+
+    env:
+      AI_MIN_SCORE: "0.60"
+      DETECTOR_DEBUG: "0"
+      PYTHONUNBUFFERED: "1"
+      MAX_IMAGES_PER_RUN: "24"
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-        
-      - name: Setup Python
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          
-      - name: Install minimal
+
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-glx libsm6 libxext6
-          pip install numpy opencv-python-headless requests
-          
-      - name: Test basic functionality
-        run: |
-          echo "=== Testing Python imports ==="
-          python3 -c "
-import cv2
-import numpy as np
-print(f'OpenCV version: {cv2.__version__}')
-print(f'NumPy version: {np.__version__}')
-print('Basic imports successful!')
-          "
-          
-      - name: Create test structure
+          sudo apt-get install -y libgl1-mesa-glx libsm6 libxext6 ffmpeg
+          pip install numpy opencv-python-headless requests pillow imageio tqdm
+
+      - name: Create directories
         run: |
           mkdir -p frames/C2 frames/C3
           mkdir -p detections
-          echo '{"test": "success"}' > detections/test.json
-          
-      - name: Verify
+
+      - name: Run comet detector
         run: |
-          echo "Directory structure:"
-          find . -type d | sort
-          echo -e "\nTest file:"
-          cat detections/test.json
+          echo "Starting detection..."
+          python detector/detect_comets.py \
+            --hours 6 \
+            --step-min 30 \
+            --max-images $MAX_IMAGES_PER_RUN \
+            --out detections
+
+      - name: Check results
+        run: |
+          echo "Results:"
+          ls -la detections/
+          if [ -f "detections/candidates_latest.json" ]; then
+            echo "Candidates file exists"
+          fi
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: detections
+          path: detections/
+          retention-days: 7
