@@ -2,3 +2,20 @@ __pycache__/
 *.pyc
 .env
 frames/
+cat > .gitignore << 'EOF'
+# NEVER commit these
+detections/
+frames/
+*.json
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.log
+*.tmp
+*.fits
+*.fits.gz
+__pycache__/
+*.pyc
+EOF
