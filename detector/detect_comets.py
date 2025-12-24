@@ -2,6 +2,33 @@
 import traceback
 import gc
 
+def main():
+    # --- NEW: Clean old files before starting ---
+    try:
+        from cleanup_old_files import cleanup_old_files
+        print("Cleaning up old files...")
+        cleanup_old_files(days_to_keep=2)  # Keep only last 2 days
+    except ImportError:
+        print("Cleanup module not found, skipping cleanup")
+    
+    ap=argparse.ArgumentParser()
+    ap.add_argument("--hours",type=int,default=6, help="How many hours back to fetch new frames")
+    ap.add_argument("--step-min",type=int,default=12)
+    ap.add_argument("--max-frames",type=int,default=100, help="Max frames to process per detector")  # NEW
+    ap.add_argument("--out",type=str,default="detections")
+    args=ap.parse_args()
+    
+    # Update the filter to use max_frames
+    series_c2 = [item for item in all_c2 if is_within_last_hours(item[0], hours=12)]
+    series_c3 = [item for item in all_c3 if is_within_last_hours(item[0], hours=12)]
+    
+    # NEW: Limit to max_frames
+    series_c2 = series_c2[-args.max_frames:]
+    series_c3 = series_c3[-args.max_frames:]
+    
+    print(f"[filter] C2: {len(all_c2)} total → {len(series_c2)} (limited to {args.max_frames})")
+    print(f"[filter] C3: {len(all_c3)} total → {len(series_c3)} (limited to {args.max_frames})")
+
 # Replace the main() function with this optimized version:
 def main():
     parser = argparse.ArgumentParser()
