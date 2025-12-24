@@ -1,0 +1,23 @@
+name: Quick Clean
+on:
+  workflow_dispatch:
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Create Clean Files
+        run: |
+          rm -rf detections/
+          mkdir -p detections
+          
+          echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "candidates": []}' > detections/candidates_latest.json
+          echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "detectors": {}, "errors": ["Fresh start"]}' > detections/latest_status.json
+          echo '{"latest": "candidates_latest.json", "reports": ["candidates_latest.json"]}' > detections/reports.json
+          
+          echo "✅ Created clean files"
+          ls -la detections/
