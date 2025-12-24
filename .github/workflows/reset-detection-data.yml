@@ -1,0 +1,50 @@
+name: Reset Detection Data
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "YES" to confirm reset'
+        required: true
+        default: 'NO'
+
+jobs:
+  reset:
+    if: inputs.confirm == 'YES'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: Reset all detection data
+        run: |
+          echo "=== RESETTING ALL DETECTION DATA ==="
+          
+          # Remove old data
+          rm -rf detections/ frames/
+          
+          # Create fresh structure
+          mkdir -p frames/C2 frames/C3
+          mkdir -p detections/{crops,annotated,originals,gifs,mp4}
+          
+          # Create empty JSON files
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "{\"timestamp_utc\": \"$timestamp\", \"candidates\": []}" > detections/candidates_latest.json
+          echo "{\"timestamp_utc\": \"$timestamp\", \"detectors\": {}, \"errors\": [\"Fresh start - data reset\"]}" > detections/latest_status.json
+          echo "{\"latest\": \"candidates_latest.json\", \"reports\": [\"candidates_latest.json\"]}" > detections/reports.json
+          
+          echo "✅ Reset complete!"
+          
+      - name: Commit and push reset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          git commit -m "chore: RESET all detection data - fresh start"
+          git push
+          
+          echo "✅ Reset committed to repository!"
