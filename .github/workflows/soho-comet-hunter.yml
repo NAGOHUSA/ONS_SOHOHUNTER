@@ -1,7 +1,7 @@
-name: SOHO Comet Hunter (detect)
+name: SOHO Comet Hunter (detect) - OPTIMIZED
 on:
   schedule:
-    - cron: "0 */6 * * *"    # Reduced: Every 6 hours instead of 4
+    - cron: "0 */8 * * *"    # Every 8 hours instead of 6
   workflow_dispatch:
 
 permissions:
@@ -9,20 +9,20 @@ permissions:
 
 concurrency:
   group: soho-detect
-  cancel-in-progress: false  # Changed: Allow parallel runs to complete
+  cancel-in-progress: true  # Stop previous runs
 
 jobs:
   detect:
-    runs-on: ubuntu-latest-8core  # Changed: Use 8-core instead of 16-core
-    timeout-minutes: 60  # Increased: 60 minutes for comet detection
+    runs-on: ubuntu-latest-4core  # Smaller runner
+    timeout-minutes: 25  # Much shorter timeout
     
     env:
-      AI_MIN_SCORE: "0.40"
+      AI_MIN_SCORE: "0.60"  # Higher threshold for fewer false positives
       DETECTOR_DEBUG: "0"
       PYTHONUNBUFFERED: "1"
-      MAX_IMAGES_PER_RUN: "24"  # Reduced: 12 per detector
-      OCCULTER_RADIUS_FRACTION: "0.20"
-      MAX_EDGE_RADIUS_FRACTION: "0.95"
+      MAX_IMAGES_PER_RUN: "8"  # Only 8 images total (4 per detector)
+      OCCULTER_RADIUS_FRACTION: "0.25"
+      MAX_EDGE_RADIUS_FRACTION: "0.90"
     
     steps:
       - name: Checkout repository
@@ -36,114 +36,60 @@ jobs:
           python-version: "3.11"
           cache: 'pip'
       
-      - name: Free disk space (aggressive)
+      - name: Clean up old data
         run: |
-          # Aggressive cleanup for GitHub runner
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-          df -h
+          rm -rf frames/C2/* frames/C3/* 2>/dev/null || true
+          rm -f detections/candidates_*.json 2>/dev/null || true
       
-      - name: Install system dependencies
+      - name: Install minimal dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            jq \
             libgl1-mesa-glx \
-            libglib2.0-0 \
             libsm6 \
             libxext6 \
-            libxrender-dev \
-            ffmpeg  # For MP4 writing
+            ffmpeg
       
       - name: Install Python dependencies
         run: |
           pip install --no-cache-dir \
             numpy>=1.24.0 \
             opencv-python-headless>=4.8.0 \
-            imageio>=2.31.0 \
-            imageio[ffmpeg] \
             requests>=2.31.0 \
             pillow>=10.0.0 \
             tqdm>=4.66.0
-          
-          # Install project dependencies if requirements.txt exists
-          if [ -f "requirements.txt" ]; then
-            pip install --no-cache-dir -r requirements.txt
-          fi
       
-      - name: Create necessary directories
-        run: |
-          mkdir -p frames/C2 frames/C3
-          mkdir -p detections/{crops,annotated,originals,gifs,mp4}
-      
-      - name: Run comet detector (with timeout guard)
+      - name: Run quick comet detector
         id: detector
         run: |
           set -euxo pipefail
           
-          echo "=== Starting detection at $(date) ==="
+          echo "=== Starting QUICK detection at $(date) ==="
           echo "Disk space:"
           df -h
           
-          # Use timeout command to prevent hanging
-          timeout 3000 bash -c "
-            python detector/detect_comets.py \
-              --hours 12 \
-              --step-min 30 \
-              --max-images ${MAX_IMAGES_PER_RUN} \
-              --timeout 2400 \
-              --out detections \
-              2>&1 | tee detector.log
-          "
-          
-          if [ $? -eq 124 ]; then
-            echo "ERROR: Detection timed out after 50 minutes"
-            echo "Creating empty results to continue workflow..."
-            mkdir -p detections
-            echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "candidates": []}' > detections/candidates_latest.json
-            echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "detectors": {}, "errors": ["Timeout after 50 minutes"]}' > detections/latest_status.json
-          fi
+          # Strict timeout - 15 minutes max
+          timeout 900 python detector/detect_comets.py \
+            --hours 4 \
+            --step-min 60 \
+            --max-images 8 \
+            --timeout 840 \
+            --out detections \
+            2>&1 | tee detector.log
           
           echo "Cleanup temporary files..."
           find . -name "*.fits" -type f -delete 2>/dev/null || true
           find . -name "*.fits.gz" -type f -delete 2>/dev/null || true
-          find . -name "*.tmp" -type f -delete 2>/dev/null || true
+      
+      - name: Create minimal results if empty
+        if: always()
+        run: |
+          if [ ! -f "detections/candidates_latest.json" ]; then
+            echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "candidates": []}' > detections/candidates_latest.json
+          fi
           
-          echo "Final disk space:"
-          df -h
-      
-      - name: Check if detections exist
-        id: check_detections
-        run: |
-          if [ -f "detections/candidates_latest.json" ]; then
-            echo "detections_exist=true" >> $GITHUB_OUTPUT
-            echo "Detections found"
-          else
-            echo "detections_exist=false" >> $GITHUB_OUTPUT
-            echo "No detections found"
-          fi
-      
-      - name: Update candidates (only if detections exist)
-        if: steps.check_detections.outputs.detections_exist == 'true'
-        run: |
-          echo "Updating candidates..."
-          if [ -f "detector/ensure_candidates_latest.py" ]; then
-            timeout 300 python detector/ensure_candidates_latest.py 2>&1 | tee ensure.log || echo "Candidate update failed, continuing..."
-          else
-            echo "ensure_candidates_latest.py not found, skipping"
-          fi
-      
-      - name: Create minimal reports.json
-        run: |
-          cd detections
-          # Create a minimal reports.json if it doesn't exist
-          if [ ! -f "reports.json" ]; then
-            echo '{"latest": "candidates_latest.json", "reports": ["candidates_latest.json"]}' > reports.json
+          if [ ! -f "detections/latest_status.json" ]; then
+            echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "detectors": {}, "errors": []}' > detections/latest_status.json
           fi
       
       - name: Commit and push results
@@ -151,31 +97,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Only commit if there are changes
-          git add detections/ || true
+          git add detections/candidates_latest.json detections/latest_status.json
           
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "chore(detections): update $(date -u +%Y-%m-%d_%H:%M)Z"
+            git commit -m "detect: quick scan $(date -u +%H:%M)Z"
             git push
           fi
       
-      - name: Upload artifacts on failure
+      - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: failure-artifacts-${{ github.run_number }}
-          path: |
-            detector.log
-            ensure.log
-            frames/
+          name: failure-logs-${{ github.run_number }}
+          path: detector.log
           retention-days: 1
-      
-      - name: Upload successful detections
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: detections-${{ github.run_number }}
-          path: detections/
-          retention-days: 7
