@@ -1,7 +1,7 @@
-name: SOHO Comet Hunter (detect) - OPTIMIZED
+name: SOHO Comet Hunter (detect)
 on:
   schedule:
-    - cron: "0 */8 * * *"    # Every 8 hours instead of 6
+    - cron: "0 */4 * * *"    # Every 4 hours
   workflow_dispatch:
 
 permissions:
@@ -9,26 +9,29 @@ permissions:
 
 concurrency:
   group: soho-detect
-  cancel-in-progress: true  # Stop previous runs
+  cancel-in-progress: true
 
 jobs:
   detect:
-    runs-on: ubuntu-latest-4core  # Smaller runner
-    timeout-minutes: 25  # Much shorter timeout
+    runs-on: ubuntu-latest-8core  # Smaller runner
+    timeout-minutes: 25  # Shorter timeout
     
     env:
-      AI_MIN_SCORE: "0.60"  # Higher threshold for fewer false positives
+      AI_MIN_SCORE: "0.60"  # Higher threshold = fewer files
       DETECTOR_DEBUG: "0"
       PYTHONUNBUFFERED: "1"
-      MAX_IMAGES_PER_RUN: "8"  # Only 8 images total (4 per detector)
-      OCCULTER_RADIUS_FRACTION: "0.25"
-      MAX_EDGE_RADIUS_FRACTION: "0.90"
+      MAX_IMAGES_PER_RUN: "24"  # Max 12 per detector
+      MAX_FILES_TO_KEEP: "500"  # NEW
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          sparse-checkout: |  # NEW: Only get necessary files
+            .github/
+            detector/
+            requirements.txt
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,80 +39,114 @@ jobs:
           python-version: "3.11"
           cache: 'pip'
       
-      - name: Clean up old data
+      - name: Free disk space
         run: |
-          rm -rf frames/C2/* frames/C3/* 2>/dev/null || true
-          rm -f detections/candidates_*.json 2>/dev/null || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android || true
+          sudo apt-get clean
+          df -h
       
-      - name: Install minimal dependencies
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgl1-mesa-glx \
-            libsm6 \
-            libxext6 \
-            ffmpeg
+          sudo apt-get update && sudo apt-get install -y jq
+          pip install --no-cache-dir -r requirements.txt
       
-      - name: Install Python dependencies
+      - name: Create directories (skip most)
         run: |
-          pip install --no-cache-dir \
-            numpy>=1.24.0 \
-            opencv-python-headless>=4.8.0 \
-            requests>=2.31.0 \
-            pillow>=10.0.0 \
-            tqdm>=4.66.0
+          mkdir -p frames/C2 frames/C3
+          mkdir -p detections
+          echo "Minimal directories created"
       
-      - name: Run quick comet detector
-        id: detector
+      - name: Run cleanup BEFORE detection
+        run: |
+          python detector/cleanup_old_files.py 2  # Keep only 2 days
+          echo "Disk usage after cleanup:"
+          du -sh detections/ frames/ 2>/dev/null || echo "No files yet"
+      
+      - name: Run comet detector (LIMITED)
         run: |
           set -euxo pipefail
           
-          echo "=== Starting QUICK detection at $(date) ==="
-          echo "Disk space:"
-          df -h
+          echo "=== Starting LIMITED detection ==="
+          echo "Max frames: ${MAX_IMAGES_PER_RUN}"
           
-          # Strict timeout - 15 minutes max
-          timeout 900 python detector/detect_comets.py \
-            --hours 4 \
-            --step-min 60 \
-            --max-images 8 \
-            --timeout 840 \
+          python detector/detect_comets.py \
+            --hours 6 \
+            --step-min 30 \
+            --max-frames 12 \  # NEW: Only 12 frames per detector
             --out detections \
             2>&1 | tee detector.log
           
-          echo "Cleanup temporary files..."
-          find . -name "*.fits" -type f -delete 2>/dev/null || true
-          find . -name "*.fits.gz" -type f -delete 2>/dev/null || true
+          echo "Processing complete"
       
-      - name: Create minimal results if empty
-        if: always()
+      - name: Run cleanup AFTER detection
         run: |
-          if [ ! -f "detections/candidates_latest.json" ]; then
-            echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "candidates": []}' > detections/candidates_latest.json
+          python detector/cleanup_old_files.py 3  # Final cleanup
+          
+          # Count files to ensure we're not bloating
+          echo "=== File Counts ==="
+          find detections -type f | wc -l || echo "0"
+          echo "Total files should be under ${MAX_FILES_TO_KEEP}"
+      
+      - name: Update candidates (LIMITED OUTPUT)
+        run: |
+          # Only update essential files
+          if [ -f "detector/ensure_candidates_latest.py" ]; then
+            python detector/ensure_candidates_latest.py 2>&1 | head -100 | tee ensure.log
           fi
           
-          if [ ! -f "detections/latest_status.json" ]; then
-            echo '{"timestamp_utc": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "detectors": {}, "errors": []}' > detections/latest_status.json
-          fi
+          # Create minimal reports
+          cd detections
+          echo '{"latest": "candidates_latest.json", "reports": ["candidates_latest.json"]}' > reports.json
       
-      - name: Commit and push results
+      - name: Remove large files before commit
+        run: |
+          # Remove GIFs/MP4s from tracking (they're too large for git)
+          rm -rf detections/gifs/* detections/mp4/* 2>/dev/null || true
+          rm -rf frames/* 2>/dev/null || true
+          
+          # Keep only JSON and small images
+          find detections -name "*.gif" -delete 2>/dev/null || true
+          find detections -name "*.mp4" -delete 2>/dev/null || true
+      
+      - name: Commit and push (SELECTIVE)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add detections/candidates_latest.json detections/latest_status.json
+          # Only add JSON files and essential directories
+          git add detections/*.json
+          git add detections/reports.json
+          
+          # Check file count
+          file_count=$(find detections -type f | wc -l)
+          echo "Total files in detections: ${file_count}"
+          
+          if [ ${file_count} -gt 1000 ]; then
+            echo "ERROR: Too many files (${file_count}). Skipping commit."
+            exit 1
+          fi
           
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "detect: quick scan $(date -u +%H:%M)Z"
+            git commit -m "detect: $(date -u +%H:%M)Z [${file_count} files]"
             git push
           fi
+      
+      - name: Upload artifacts (temporary storage)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detection-artifacts
+          path: detections/
+          retention-days: 3  # Auto-delete after 3 days
       
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: failure-logs-${{ github.run_number }}
-          path: detector.log
-          retention-days: 1
+          name: error-logs
+          path: |
+            detector.log
+            ensure.log
+          retention-days: 2
