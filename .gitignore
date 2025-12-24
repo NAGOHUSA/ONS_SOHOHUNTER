@@ -19,3 +19,36 @@ frames/
 __pycache__/
 *.pyc
 EOF
+# NEVER commit these
+frames/
+detections/gifs/
+detections/mp4/
+detections/crops/
+detections/annotated/
+detections/originals/
+
+# Temporary files
+*.log
+*.tmp
+*.fits
+*.fits.gz
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Keep only JSON files in detections/
+!detections/*.json
+!detections/reports.json
