@@ -31,37 +31,105 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install OpenCV dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-glx libsm6 libxext6 ffmpeg
-          pip install numpy opencv-python-headless requests pillow imageio tqdm
+          # Updated packages for Ubuntu 22.04/24.04
+          sudo apt-get install -y \
+            libgl1 \
+            libsm6 \
+            libxext6 \
+            libxrender1 \
+            libglib2.0-0 \
+            ffmpeg
+
+      - name: Install Python packages
+        run: |
+          pip install --no-cache-dir \
+            numpy \
+            opencv-python-headless \
+            requests \
+            pillow \
+            imageio \
+            imageio[ffmpeg] \
+            tqdm
 
       - name: Create directories
         run: |
           mkdir -p frames/C2 frames/C3
           mkdir -p detections
 
+      - name: Test OpenCV import
+        run: |
+          python3 -c "
+import cv2
+import numpy as np
+print(f'OpenCV version: {cv2.__version__}')
+print(f'NumPy version: {np.__version__}')
+print('OpenCV loaded successfully!')
+          "
+
       - name: Run comet detector
         run: |
-          echo "Starting detection..."
+          echo "=== Starting SOHO comet detection ==="
+          date
+          
+          # Run the detector with minimal parameters for testing
           python detector/detect_comets.py \
-            --hours 6 \
+            --hours 2 \
             --step-min 30 \
-            --max-images $MAX_IMAGES_PER_RUN \
-            --out detections
+            --max-images 8 \
+            --out detections \
+            2>&1 | tee detector.log
+          
+          echo "=== Detection complete ==="
+          date
+          
+          # Check what was created
+          echo "Files created:"
+          ls -la detections/ || echo "No detections directory"
 
       - name: Check results
         run: |
-          echo "Results:"
-          ls -la detections/
+          echo "=== Results Summary ==="
+          
           if [ -f "detections/candidates_latest.json" ]; then
-            echo "Candidates file exists"
+            echo "Candidates file found"
+            python3 -c "
+import json, os
+try:
+    with open('detections/candidates_latest.json', 'r') as f:
+        data = json.load(f)
+    print(f'Found {len(data)} candidates')
+    for i, cand in enumerate(data[:3]):
+        print(f'  {i+1}. Detector: {cand.get(\"detector\", \"?\")}, Score: {cand.get(\"ai_score\", 0):.2f}')
+except Exception as e:
+    print(f'Error reading candidates: {e}')
+            "
+          else
+            echo "No candidates file created"
+            # Check the log for errors
+            if [ -f "detector.log" ]; then
+              echo "=== Last 20 lines of log ==="
+              tail -20 detector.log
+            fi
           fi
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: detections
-          path: detections/
-          retention-days: 7
+          name: soho-results
+          path: |
+            detections/
+            detector.log
+          retention-days: 3
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-debug
+          path: |
+            detector.log
+            frames/
+          retention-days: 2
