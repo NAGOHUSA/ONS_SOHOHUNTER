@@ -1,135 +1,48 @@
 name: SOHO Comet Hunter
 on:
-  schedule:
-    - cron: "0 */6 * * *"
   workflow_dispatch:
-
-permissions:
-  contents: write
-
-concurrency:
-  group: soho-detect
-  cancel-in-progress: true
 
 jobs:
   detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    env:
-      AI_MIN_SCORE: "0.60"
-      DETECTOR_DEBUG: "0"
-      PYTHONUNBUFFERED: "1"
-      MAX_IMAGES_PER_RUN: "24"
-
+    timeout-minutes: 20
+    
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Python
+        
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install OpenCV dependencies
+          
+      - name: Install packages
         run: |
           sudo apt-get update
-          # Updated packages for Ubuntu 22.04/24.04
-          sudo apt-get install -y \
-            libgl1 \
-            libsm6 \
-            libxext6 \
-            libxrender1 \
-            libglib2.0-0 \
-            ffmpeg
-
-      - name: Install Python packages
-        run: |
-          pip install --no-cache-dir \
-            numpy \
-            opencv-python-headless \
-            requests \
-            pillow \
-            imageio \
-            imageio[ffmpeg] \
-            tqdm
-
+          sudo apt-get install -y ffmpeg libsm6 libxext6
+          pip install numpy opencv-python-headless requests
+          
       - name: Create directories
+        run: mkdir -p frames/C2 frames/C3 detections
+        
+      - name: Test import
+        run: python -c "import cv2, numpy; print('OpenCV:', cv2.__version__, 'NumPy:', numpy.__version__)"
+        
+      - name: Run detection
         run: |
-          mkdir -p frames/C2 frames/C3
-          mkdir -p detections
-
-      - name: Test OpenCV import
+          python detector/detect_comets.py --hours 1 --max-images 4 --out detections 2>&1 | tee detector.log
+          echo "Exit code: $?"
+          
+      - name: Show results
         run: |
-          python3 -c "
-import cv2
-import numpy as np
-print(f'OpenCV version: {cv2.__version__}')
-print(f'NumPy version: {np.__version__}')
-print('OpenCV loaded successfully!')
-          "
-
-      - name: Run comet detector
-        run: |
-          echo "=== Starting SOHO comet detection ==="
-          date
+          ls -la detections/ 2>/dev/null || echo "No detections folder"
+          [ -f "detector.log" ] && echo "=== Log tail ===" && tail -30 detector.log
           
-          # Run the detector with minimal parameters for testing
-          python detector/detect_comets.py \
-            --hours 2 \
-            --step-min 30 \
-            --max-images 8 \
-            --out detections \
-            2>&1 | tee detector.log
-          
-          echo "=== Detection complete ==="
-          date
-          
-          # Check what was created
-          echo "Files created:"
-          ls -la detections/ || echo "No detections directory"
-
-      - name: Check results
-        run: |
-          echo "=== Results Summary ==="
-          
-          if [ -f "detections/candidates_latest.json" ]; then
-            echo "Candidates file found"
-            python3 -c "
-import json, os
-try:
-    with open('detections/candidates_latest.json', 'r') as f:
-        data = json.load(f)
-    print(f'Found {len(data)} candidates')
-    for i, cand in enumerate(data[:3]):
-        print(f'  {i+1}. Detector: {cand.get(\"detector\", \"?\")}, Score: {cand.get(\"ai_score\", 0):.2f}')
-except Exception as e:
-    print(f'Error reading candidates: {e}')
-            "
-          else
-            echo "No candidates file created"
-            # Check the log for errors
-            if [ -f "detector.log" ]; then
-              echo "=== Last 20 lines of log ==="
-              tail -20 detector.log
-            fi
-          fi
-
-      - name: Upload results
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: soho-results
+          name: results
           path: |
             detections/
             detector.log
-          retention-days: 3
-
-      - name: Upload failure logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failure-debug
-          path: |
-            detector.log
-            frames/
           retention-days: 2
