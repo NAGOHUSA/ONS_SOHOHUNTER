@@ -1,66 +1,101 @@
-# .github/workflows/soho-comet-hunter.yml
-name: SOHO Comet Hunter
+name: SOHO Comet Hunt
 
 on:
   schedule:
-    # every 3 hours
-    - cron: "0 */3 * * *"
-  workflow_dispatch: {}   # allow manual runs from the Actions tab
+    - cron: "0 * * * *"   # hourly at :00 UTC
+  workflow_dispatch: {}    # allow manual runs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: soho-comet-hunt
+  cancel-in-progress: false
 
 jobs:
-  detect:
+  run:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    env:
-      # Optional toggles / secrets (safe if unset)
-      USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
-      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
-      DETECTOR_DEBUG: "1"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Run detector
+      - name: Ensure folders
         run: |
-          # Run from repo root; script imports modules in detector/ fine when invoked by path
-          python detector/detect_comets.py \
-            --hours 6 \
-            --step-min 12 \
-            --out detections
+          mkdir -p frames detections detections/reports
 
-      - name: Upload frames (artifact for debugging)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: frames-${{ github.run_id }}
-          path: |
-            frames/**
-          if-no-files-found: ignore
-          retention-days: 2
-
-      - name: Commit detections (JSON/CSV/overlays/animations)
+      - name: Detect comets (6h lookback, 12m step)
         run: |
+          set -euo pipefail
+          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
+          echo "detections/ tree:"
+          find detections -maxdepth 2 -type f -printf "%P\n" | sort | sed 's/^/  - /'
+
+      - name: Write candidates_latest.json (always)
+        run: |
+          set -euo pipefail
+          python - << 'PY'
+import json, glob
+from pathlib import Path
+det = Path("detections"); det.mkdir(exist_ok=True)
+out = det / "candidates_latest.json"
+cands = sorted(glob.glob("detections/candidates_*.json"), reverse=True)
+if not cands:
+    out.write_text("[]\n", encoding="utf-8")
+else:
+    data = json.load(open(cands[0], "r", encoding="utf-8"))
+    if isinstance(data, dict) and isinstance(data.get("candidates"), list):
+        data = data["candidates"]
+    json.dump(data if isinstance(data, list) else [], open(out, "w", encoding="utf-8"), indent=2)
+    open(out, "a", encoding="utf-8").write("\n")
+print("Updated detections/candidates_latest.json")
+PY
+
+      - name: Commit outputs
+        id: commit
+        run: |
+          set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Only commit when something actually changed in detections/
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
-            git commit -m "SOHO Hunter update: $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
+            git commit -m "Auto: new detections + AI labels [$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [skip ci]"
+            echo "committed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No new detections to commit."
+            echo "committed=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Push changes
+        if: steps.commit.outputs.committed == 'true'
+        run: git push origin HEAD:main --force-with-lease
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: detections-${{ github.run_id }}
+          path: |
+            detections/latest_status.json
+            detections/candidates_latest.json
+            detections/candidates_*.json
+            detections/*.png
+            detections/reports/*.txt
+            detections/reports/*.csv
+          if-no-files-found: warn
+          retention-days: 7
