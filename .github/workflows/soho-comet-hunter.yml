@@ -3,78 +3,78 @@ name: SOHO Comet Hunter
 on:
   workflow_dispatch:
   schedule:
-    - cron: "15 * * * *"   # every hour at :15 UTC
+    - cron: "30 * * * *"   # hourly at :30 UTC
 
 permissions:
   contents: write
 
 jobs:
-  soho-hunt:
+  soho:
     runs-on: ubuntu-latest
 
     steps:
-      # -------------------------------------------------
-      # Checkout repository
-      # -------------------------------------------------
-      - name: Checkout repository
+      # -----------------------------
+      # Checkout repo
+      # -----------------------------
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # -------------------------------------------------
-      # Python setup
-      # -------------------------------------------------
+      # -----------------------------
+      # Python
+      # -----------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # -------------------------------------------------
-      # Install dependencies
-      # -------------------------------------------------
-      - name: Install dependencies
+      # -----------------------------
+      # Install deps
+      # -----------------------------
+      - name: Install requirements
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # -------------------------------------------------
-      # Ensure directories exist
-      # -------------------------------------------------
+      # -----------------------------
+      # Ensure output dirs
+      # -----------------------------
       - name: Prepare directories
         run: |
           mkdir -p frames
           mkdir -p detections
           mkdir -p detections/reports
 
-      # -------------------------------------------------
-      # Fetch LASCO images (last 24 hours)
-      # -------------------------------------------------
-      - name: Fetch SOHO LASCO images
+      # -----------------------------
+      # Fetch LASCO images (24h)
+      # -----------------------------
+      - name: Fetch SOHO images
         run: |
           python fetch_lasco.py --hours 24
 
-      # -------------------------------------------------
-      # Run comet detection
-      # -------------------------------------------------
-      - name: Detect comets
+      # -----------------------------
+      # Detect comets (24h window)
+      # -----------------------------
+      - name: Run detector
         run: |
           python detect_comets.py \
             --hours 24 \
             --step-min 12 \
             --out detections
 
-      # -------------------------------------------------
-      # Ensure candidates_latest.json ALWAYS exists
-      # -------------------------------------------------
-      - name: Update candidates_latest.json
+      # -----------------------------
+      # Always refresh candidates_latest.json
+      # -----------------------------
+      - name: Write candidates_latest.json
         run: |
-          python - << 'EOF'
+          python - << 'PY'
 import json, glob
 from pathlib import Path
 
-detections = Path("detections")
-detections.mkdir(exist_ok=True)
+out_dir = Path("detections")
+out_dir.mkdir(exist_ok=True)
 
-latest = detections / "candidates_latest.json"
-files = sorted(glob.glob("detections/candidates_*.json"), reverse=True)
+latest = out_dir / "candidates_latest.json"
+files = sorted(out_dir.glob("candidates_*.json"), reverse=True)
 
 if not files:
     latest.write_text("[]\n", encoding="utf-8")
@@ -85,20 +85,20 @@ else:
     json.dump(data if isinstance(data, list) else [], open(latest, "w"), indent=2)
     open(latest, "a").write("\n")
 
-print("candidates_latest.json updated")
-EOF
+print("Updated candidates_latest.json")
+PY
 
-      # -------------------------------------------------
-      # Commit & push results
-      # -------------------------------------------------
-      - name: Commit detection outputs
+      # -----------------------------
+      # Commit outputs
+      # -----------------------------
+      - name: Commit results
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if [ -n "$(git status --porcelain detections)" ]; then
             git add detections
-            git commit -m "Auto update: SOHO detections $(date -u +'%Y-%m-%d %H:%M UTC')" || true
+            git commit -m "Auto: SOHO detection update $(date -u +'%Y-%m-%d %H:%M UTC')" || true
             git push
           else
             echo "No detection changes"
