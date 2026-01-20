@@ -1,5 +1,8 @@
 name: SOHO Comet Hunter
 on:
+  schedule:
+    # Runs every 4 hours at minute 0
+    - cron: '0 */4 * * *'
   workflow_dispatch:
 
 jobs:
@@ -28,10 +31,20 @@ jobs:
       - name: Test import
         run: python -c "import cv2, numpy; print('OpenCV:', cv2.__version__, 'NumPy:', numpy.__version__)"
         
-      - name: Run detection
+      - name: Run detection (Production Mode)
         run: |
-          python detector/detect_comets.py --hours 1 --max-images 4 --out detections 2>&1 | tee detector.log
+          # Remove test flags and run with production settings
+          # Assuming your script has a --test flag or similar that needs to be removed
+          # If it doesn't, just run the regular command
+          python detector/detect_comets.py --out detections 2>&1 | tee detector.log
           echo "Exit code: $?"
+          
+      - name: Clean old data (older than 7 days)
+        run: |
+          # Clean any old files in the repository that might clog it up
+          find detections -name "*.json" -mtime +7 -delete 2>/dev/null || true
+          find detections -name "*.txt" -mtime +7 -delete 2>/dev/null || true
+          find detections -name "*.log" -mtime +7 -delete 2>/dev/null || true
           
       - name: Show results
         run: |
@@ -41,8 +54,8 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: results
+          name: comet-detection-results
           path: |
             detections/
             detector.log
-          retention-days: 2
+          retention-days: 7  # Changed from 2 to 7 days
