@@ -1,61 +1,66 @@
+# .github/workflows/soho-comet-hunter.yml
 name: SOHO Comet Hunter
+
 on:
   schedule:
-    # Runs every 4 hours at minute 0
-    - cron: '0 */4 * * *'
-  workflow_dispatch:
+    # every 3 hours
+    - cron: "0 */3 * * *"
+  workflow_dispatch: {}   # allow manual runs from the Actions tab
 
 jobs:
   detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    
+    permissions:
+      contents: write
+
+    env:
+      # Optional toggles / secrets (safe if unset)
+      USE_AI_CLASSIFIER: ${{ secrets.USE_AI_CLASSIFIER }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      DETECTOR_DEBUG: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
-      - name: Setup Python
+
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          
-      - name: Install packages
+
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg libsm6 libxext6
-          pip install numpy opencv-python-headless requests
-          
-      - name: Create directories
-        run: mkdir -p frames/C2 frames/C3 detections
-        
-      - name: Test import
-        run: python -c "import cv2, numpy; print('OpenCV:', cv2.__version__, 'NumPy:', numpy.__version__)"
-        
-      - name: Run detection (Production Mode)
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run detector
         run: |
-          # Remove test flags and run with production settings
-          # Assuming your script has a --test flag or similar that needs to be removed
-          # If it doesn't, just run the regular command
-          python detector/detect_comets.py --out detections 2>&1 | tee detector.log
-          echo "Exit code: $?"
-          
-      - name: Clean old data (older than 7 days)
-        run: |
-          # Clean any old files in the repository that might clog it up
-          find detections -name "*.json" -mtime +7 -delete 2>/dev/null || true
-          find detections -name "*.txt" -mtime +7 -delete 2>/dev/null || true
-          find detections -name "*.log" -mtime +7 -delete 2>/dev/null || true
-          
-      - name: Show results
-        run: |
-          ls -la detections/ 2>/dev/null || echo "No detections folder"
-          [ -f "detector.log" ] && echo "=== Log tail ===" && tail -30 detector.log
-          
-      - name: Upload
+          # Run from repo root; script imports modules in detector/ fine when invoked by path
+          python detector/detect_comets.py \
+            --hours 6 \
+            --step-min 12 \
+            --out detections
+
+      - name: Upload frames (artifact for debugging)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: comet-detection-results
+          name: frames-${{ github.run_id }}
           path: |
-            detections/
-            detector.log
-          retention-days: 7  # Changed from 2 to 7 days
+            frames/**
+          if-no-files-found: ignore
+          retention-days: 2
+
+      - name: Commit detections (JSON/CSV/overlays/animations)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Only commit when something actually changed in detections/
+          if [ -n "$(git status --porcelain detections)" ]; then
+            git add detections
+            git commit -m "SOHO Hunter update: $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          else
+            echo "No new detections to commit."
+          fi
