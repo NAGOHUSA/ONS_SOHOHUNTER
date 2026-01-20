@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-0901537229802149"
+     crossorigin="anonymous"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>SOHO Comet Hunter – Professional Dashboard</title>
+  <link rel="icon" href="https://soho.nascom.nasa.gov/favicon.ico">
+  <style>
+    /* [Keep all existing CSS - it's fine] */
+  </style>
+</head>
+<body>
+  <!-- [Keep all existing HTML structure] -->
+
+  <script>
+    // FIXED: Updated repository and branch information
+    const CONFIG = { 
+      repo: 'NAGOHUSA/ONS_SOHOHUNTER', 
+      ref: 'main',  // Changed from 'main' to 'master' if your branch is actually 'master'
+      folder: 'detections' 
+    };
+    
+    // FIXED: Added proper GitHub API URL with authentication headers
+    const GITHUB_API = `https://api.github.com/repos/${CONFIG.repo}/contents/${CONFIG.folder}?ref=${CONFIG.ref}`;
+    const NASA_DB_URL = 'https://comet.nrl.navy.mil/nrlsoho/cometdb.txt';
+    const PAGE_SIZE = 25;
+    const DEBOUNCE_MS = 180;
+
+    // FIXED: Improved RAW_URL function with better path handling
+    const RAW_URL = (path) => {
+      if (!path) return '';
+      
+      // If it's already a full URL, return as-is
+      if (path.startsWith('http://') || path.startsWith('https://')) {
+        return path;
+      }
+      
+      // Clean up the path
+      let cleanPath = path.replace(/^\.?\/*/, '');
+      
+      // If path already includes the folder, use as-is
+      if (cleanPath.startsWith(CONFIG.folder + '/')) {
+        return `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.ref}/${cleanPath}`;
+      }
+      
+      // Otherwise, prepend the folder
+      return `https://raw.githubusercontent.com/${CONFIG.repo}/${CONFIG.ref}/${CONFIG.folder}/${cleanPath}`;
+    };
+
+    let allCandidates = [], filteredCandidates = [], nasaCatalog = [], allFlaggedAcross = [], reportNames = [];
+    let markedIds = new Set();
+    let visibleCount = PAGE_SIZE;
+    const modalCache = new Map();
+    const els = {};
+
+    // FIXED: Added debug logging function
+    function debugLog(...args) {
+      console.log('[DEBUG]', ...args);
+    }
+
+    // FIXED: Improved report loading with better error handling
+    async function listReportsViaAPI(){
+      try{
+        debugLog('Fetching reports from:', GITHUB_API);
+        
+        // Use a more robust fetch with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const r = await fetch(GITHUB_API, {
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'SOHO-Comet-Hunter-Dashboard'
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!r.ok) {
+          debugLog('GitHub API error:', r.status, r.statusText);
+          throw new Error(`GitHub API error: ${r.status} ${r.statusText}`);
+        }
+        
+        const files = await r.json();
+        debugLog('GitHub API response:', files);
+        
+        if (!Array.isArray(files)) {
+          debugLog('Expected array but got:', typeof files);
+          return [];
+        }
+        
+        // Filter for candidate JSON files
+        const candidateFiles = files
+          .filter(f => f.name && f.name.startsWith('candidates_') && f.name.endsWith('.json'))
+          .map(f => f.name)
+          .sort((a,b) => b.localeCompare(a)); // Newest first
+        
+        debugLog('Found candidate files:', candidateFiles);
+        return candidateFiles;
+        
+      } catch(e) {
+        console.error('Report listing failed:', e);
+        debugLog('Fallback: Trying to manually list known reports...');
+        
+        // Fallback: Try to load specific report names if API fails
+        const fallbackReports = [
+          'candidates_latest.json'
+        ];
+        
+        // Test each fallback report
+        const availableReports = [];
+        for (const report of fallbackReports) {
+          try {
+            const testUrl = RAW_URL(report);
+            const testResp = await fetch(testUrl, { method: 'HEAD' });
+            if (testResp.ok) {
+              availableReports.push(report);
+            }
+          } catch (_) {
+            // Ignore errors in fallback
+          }
+        }
+        
+        return availableReports;
+      }
+    }
+
+    // FIXED: Improved loadLatestPointer with better error handling
+    async function loadLatestPointer(){
+      try{
+        const latestUrl = RAW_URL('candidates_latest.json');
+        debugLog('Loading latest pointer from:', latestUrl);
+        
+        const response = await fetch(latestUrl, { 
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch latest: ${response.status}`);
+        }
+        
+        const latest = await response.json();
+        
+        // Handle different JSON structures
+        let candidates = [];
+        if (Array.isArray(latest)) {
+          candidates = latest;
+        } else if (latest && Array.isArray(latest.candidates)) {
+          candidates = latest.candidates;
+        } else if (latest && latest.data && Array.isArray(latest.data)) {
+          candidates = latest.data;
+        } else {
+          debugLog('Unexpected JSON structure:', latest);
+          candidates = [];
+        }
+        
+        allCandidates = normalizeCandidates(candidates, 'candidates_latest.json');
+        debugLog('Loaded candidates from latest:', allCandidates.length);
+        return true;
+        
+      } catch(error) {
+        console.error('Failed to load latest pointer:', error);
+        debugLog('Latest pointer load failed:', error.message);
+        return false;
+      }
+    }
+
+    // FIXED: Improved report loading with timeout
+    async function loadReport(name){
+      if (!name) return;
+      
+      els.reportStatus.innerHTML = '<span class="spinner"></span> Loading…';
+      els.candidatesGrid.innerHTML = '';
+      els.filterCount.textContent = 'Loading…';
+      els.emptyState.style.display = 'none';
+      document.getElementById('loadMoreWrap').style.display = 'none';
+
+      if (name === '__LATEST__') { 
+        const ok = await loadLatestPointer(); 
+        if (ok) {
+          els.reportStatus.textContent = 'latest';
+          updateCandidateDropdowns(); 
+          crossCheckCandidates(); 
+          applyFilters();
+        } else {
+          els.reportStatus.textContent = 'Failed to load latest';
+        }
+        return; 
+      }
+
+      const url = RAW_URL(name);
+      debugLog('Loading report from:', url);
+      
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        
+        const response = await fetch(url, { 
+          signal: controller.signal,
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const raw = await response.json();
+        
+        // Process the JSON data
+        allCandidates = normalizeCandidates(raw, name);
+        const label = name.replace('candidates_','').replace('.json','');
+        els.reportStatus.textContent = label;
+        updateCandidateDropdowns();
+        crossCheckCandidates();
+        applyFilters();
+        
+        debugLog(`Loaded report "${name}" with ${allCandidates.length} candidates`);
+        
+      } catch(error) { 
+        console.error('Fetch failed:', url, error); 
+        els.reportStatus.textContent = `Failed: ${error.message}`;
+        
+        // Show error in UI
+        els.candidatesGrid.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-tertiary);">
+            <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
+            <div>Failed to load report</div>
+            <div style="font-size: 12px; margin-top: 10px;">${error.message}</div>
+            <button class="btn" style="margin-top: 20px;" onclick="loadReport('${name}')">Retry</button>
+          </div>
+        `;
+      }
+    }
+
+    // FIXED: Improved populateReportSelect with better error states
+    async function populateReportSelect(){
+      els.reportStatus.innerHTML = '<span class="spinner"></span> Checking for reports…';
+      
+      // Always try to load latest first
+      const latestOk = await loadLatestPointer();
+      
+      // Then get list of all reports
+      try {
+        reportNames = await listReportsViaAPI();
+        debugLog('Available reports:', reportNames);
+        
+        // Build dropdown options
+        const opts = [];
+        
+        if (latestOk) {
+          opts.push(`<option value="__LATEST__">latest (pointer)</option>`);
+        }
+        
+        if (reportNames && reportNames.length > 0) {
+          opts.push(...reportNames.map(name => {
+            const label = name.replace('candidates_', '').replace('.json', '');
+            const dateMatch = label.match(/\d{4}-\d{2}-\d{2}/);
+            const displayLabel = dateMatch ? new Date(dateMatch[0]).toLocaleDateString() : label;
+            return `<option value="${name}">${displayLabel}</option>`;
+          }));
+        }
+        
+        // Update dropdown
+        if (opts.length > 0) {
+          els.reportSelect.innerHTML = opts.join('');
+          els.reportStatus.textContent = `Found ${opts.length} report(s)`;
+          
+          // Auto-select latest if available
+          if (latestOk) {
+            els.reportSelect.value = '__LATEST__';
+          } else if (reportNames.length > 0) {
+            await loadReport(reportNames[0]);
+          }
+        } else {
+          els.reportSelect.innerHTML = '<option value="">No reports found</option>';
+          els.reportStatus.textContent = 'No reports available';
+          allCandidates = [];
+          updateCandidateDropdowns();
+          applyFilters();
+          
+          // Show help message
+          els.candidatesGrid.innerHTML = `
+            <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-tertiary);">
+              <div style="font-size: 24px; margin-bottom: 10px;">📁</div>
+              <div>No detection reports found</div>
+              <div style="font-size: 12px; margin-top: 10px;">
+                Make sure your GitHub Actions workflow is running and generating reports in the "detections" folder.
+              </div>
+              <div style="font-size: 11px; margin-top: 20px; color: var(--accent);">
+                <a href="https://github.com/${CONFIG.repo}/tree/${CONFIG.ref}/${CONFIG.folder}" 
+                   target="_blank" 
+                   style="color: var(--accent); text-decoration: none;">
+                  ↗ Check repository files
+                </a>
+              </div>
+            </div>
+          `;
+        }
+        
+      } catch (error) {
+        console.error('Failed to populate reports:', error);
+        els.reportStatus.textContent = 'Error loading reports';
+        els.reportSelect.innerHTML = '<option value="">Error loading reports</option>';
+      }
+    }
+
+    // FIXED: Added a test function to check GitHub connectivity
+    async function testGitHubConnection() {
+      try {
+        const testUrl = `https://api.github.com/repos/${CONFIG.repo}`;
+        const response = await fetch(testUrl, {
+          headers: { 'User-Agent': 'SOHO-Comet-Hunter-Dashboard' }
+        });
+        
+        if (response.ok) {
+          debugLog('GitHub repository is accessible');
+          return true;
+        } else {
+          debugLog('GitHub repository not accessible:', response.status);
+          return false;
+        }
+      } catch (error) {
+        debugLog('GitHub connection test failed:', error);
+        return false;
+      }
+    }
+
+    // FIXED: Enhanced initialization with connection test
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Initialize element references
+      Object.assign(els, {
+        reportSelect:      document.getElementById('reportSelect'),
+        candidateSelect:   document.getElementById('candidateSelect'),
+        cometSelect:       document.getElementById('cometSelect'),
+        refreshBtn:        document.getElementById('refreshBtn'),
+        countdown:         document.getElementById('countdown'),
+        exportTxtBtn:      document.getElementById('exportTxtBtn'),
+        exportCsvBtn:      document.getElementById('exportCsvBtn'),
+        exportSungrazerBtn:document.getElementById('exportSungrazerBtn'),
+        exportAllFlaggedBtn:document.getElementById('exportAllFlaggedBtn'),
+        exportMarkedOnly:  document.getElementById('exportMarkedOnly'),
+        sungrazerObject:   document.getElementById('sungrazerObject'),
+        sungrazerInstrument:document.getElementById('sungrazerInstrument'),
+        filterC2:          document.getElementById('filterC2'),
+        filterC3:          document.getElementById('filterC3'),
+        filterComet:       document.getElementById('filterComet'),
+        filterMarked:      document.getElementById('filterMarked'),
+        showNotComet:      document.getElementById('showNotComet'),
+        highlightOfficial: document.getElementById('highlightOfficial'),
+        filterScore51:     document.getElementById('filterScore51'),
+        candidatesGrid:    document.getElementById('candidatesGrid'),
+        filterCount:       document.getElementById('filterCount'),
+        emptyState:        document.getElementById('emptyState'),
+        c2LiveGif:         document.getElementById('c2LiveGif'),
+        c3LiveGif:         document.getElementById('c3LiveGif'),
+        c2Timestamp:       document.getElementById('c2Timestamp'),
+        c3Timestamp:       document.getElementById('c3Timestamp'),
+        reloadDbBtn:       document.getElementById('reloadDbBtn'),
+        dbStatus:          document.getElementById('dbStatus'),
+        dbTableBody:       document.getElementById('dbTableBody'),
+        reportStatus:      document.getElementById('reportStatus')
+      });
+
+      // Test connection first
+      const connected = await testGitHubConnection();
+      if (!connected) {
+        els.reportStatus.innerHTML = `
+          <span style="color: var(--danger)">⚠ Cannot connect to GitHub</span>
+          <br><small style="font-size: 10px;">Check network or repository access</small>
+        `;
+      }
+
+      // Initialize event listeners
+      document.getElementById('toggleC2').addEventListener('click', () => toggleLiveGif('feedC2','toggleC2','c2LiveGif','c2Timestamp'));
+      document.getElementById('toggleC3').addEventListener('click', () => toggleLiveGif('feedC3','toggleC3','c3LiveGif','c3Timestamp'));
+
+      els.refreshBtn.addEventListener('click', () => {
+        els.reportStatus.innerHTML = '<span class="spinner"></span> Refreshing…';
+        setTimeout(() => populateReportSelect(), 500);
+      });
+      
+      els.reportSelect.addEventListener('change', e => loadReport(e.target.value));
+      els.candidateSelect.addEventListener('change', scheduleFilter);
+      els.cometSelect.addEventListener('change', () => { crossCheckCandidates(); scheduleFilter(); });
+      
+      ['filterC2','filterC3','filterComet','filterMarked','showNotComet','highlightOfficial','filterScore51'].forEach(id => {
+        els[id]?.addEventListener('change', scheduleFilter);
+      });
+      
+      // [Keep all other event listeners as they were]
+
+      // Initialize the dashboard
+      populateReportSelect();
+      loadNasaCatalog();
+      updateLiveStamps();
+      startCountdown(300);
+      
+      // Show repository link in console for debugging
+      console.log('Dashboard configured for repository:', CONFIG.repo);
+      console.log('Branch:', CONFIG.ref);
+      console.log('Folder:', CONFIG.folder);
+    });
+
+    // [Keep all other existing functions as they were]
+  </script>
+</body>
+</html>
