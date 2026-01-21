@@ -27,9 +27,9 @@ try:
 except Exception:
     GIF_AVAILABLE = False
 
-# Local modules
+# Local modules - UPDATED IMPORT
 try:
-    from fetch_lasco import fetch_window
+    from fetch_lasco import SohoImageFetcher
     FETCH_AVAILABLE = True
 except ImportError:
     FETCH_AVAILABLE = False
@@ -466,7 +466,7 @@ def process_tracks(det: str,
 def main():
     parser = argparse.ArgumentParser(description="SOHO Comet Detector")
     parser.add_argument("--hours", type=int, default=12, help="Hours to look back")
-    parser.add_argument("--step-min", type=int, default=30, help="Minutes between frames")
+    parser.add_argument("--step-min", type=int, default=12, help="Minutes between frames")
     parser.add_argument("--max-images", type=int, default=24, help="Max images per run")
     parser.add_argument("--timeout", type=int, default=2400, help="Timeout in seconds")
     parser.add_argument("--out", type=str, default="detections", help="Output directory")
@@ -481,12 +481,13 @@ def main():
     out_dir = pathlib.Path(args.out)
     ensure_dir(out_dir)
     
-    # Fetch images
+    # Fetch images - UPDATED FETCH SECTION
     print("\n[1/4] Fetching images...")
     fetched = []
     if FETCH_AVAILABLE:
         try:
-            fetched = fetch_window(
+            fetcher = SohoImageFetcher(root_dir="frames")
+            fetched = fetcher.fetch_window(
                 hours_back=args.hours,
                 step_min=args.step_min,
                 root="frames",
@@ -495,6 +496,8 @@ def main():
             print(f"  Downloaded {len(fetched)} new files")
         except Exception as e:
             print(f"  WARNING: Fetch failed: {e}")
+            import traceback
+            traceback.print_exc()
     else:
         print("  WARNING: fetch_lasco module not available, using existing frames only")
     
