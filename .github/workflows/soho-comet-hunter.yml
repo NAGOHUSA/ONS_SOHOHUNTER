@@ -1,108 +1,112 @@
-name: SOHO Comet Hunter
+name: SOHO Comet Hunter (detect)
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "30 */2 * * *"
+    - cron: "0 */4 * * *"    # Every 4 hours
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: soho-detect
+  cancel-in-progress: true
+
 jobs:
-  soho:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  detect:
+    runs-on: ubuntu-latest-16core   # ← Critical: 38 GB disk instead of 14 GB
+
+    env:
+      AI_MIN_SCORE: "0.40"
+      DETECTOR_DEBUG: "0"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget ffmpeg libsm6 libxext6
+      # ──────────────────────────────────────────────────────────────
+      # BEST-IN-CLASS DISK SPACE SOLUTION (2025 standard for SOHO hunters)
+      # ──────────────────────────────────────────────────────────────
+      - name: Free disk space (including runner diag logs)
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
 
-      - name: Install Python dependencies
+      - name: Disable GitHub Actions internal diagnostic logging (prevents Worker_*.log blowup)
+        run: |
+          mkdir -p "$HOME/.runner"
+          echo '{"disablelog": true}' > "$HOME/.runner/.runner"
+
+      # ──────────────────────────────────────────────────────────────
+      # Rest of your pipeline (now safe from disk exhaustion)
+      # ──────────────────────────────────────────────────────────────
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install Python dependencies (no cache dir → no bloat)
         run: |
           python -m pip install --upgrade pip
-          pip install numpy opencv-python-headless requests imageio imageio-ffmpeg
+          pip install --no-cache-dir -r requirements.txt
 
-      - name: Prepare directories
+      - name: Run comet detector
         run: |
-          mkdir -p frames/C2
-          mkdir -p frames/C3
-          mkdir -p detections
+          set -euxo pipefail
+          python detector/detect_comets.py --hours 6 --step-min 12 --out detections > detector.log 2>&1
+          python detector/ensure_candidates_latest.py > ensure.log 2>&1 || true
 
-      - name: Download SOHO images (last 48 hours)
-        run: |
-          for h in $(seq 0 23); do
-            TS=$(date -u -d "$h hour ago" +"%Y%m%d_%H%M")
-
-            wget -q -O frames/C2/${TS}_c2.jpg \
-              https://soho.nascom.nasa.gov/data/realtime/c2/1024/latest.jpg || true
-
-            wget -q -O frames/C3/${TS}_c3.jpg \
-              https://soho.nascom.nasa.gov/data/realtime/c3/1024/latest.jpg || true
-          done
-
-      - name: Count downloaded frames
-        run: |
-          C2_COUNT=$(ls frames/C2/*.jpg 2>/dev/null | wc -l || echo 0)
-          C3_COUNT=$(ls frames/C3/*.jpg 2>/dev/null | wc -l || echo 0)
-          echo "C2 frames: $C2_COUNT"
-          echo "C3 frames: $C3_COUNT"
-
-      - name: Run comet detection
-        run: |
-          if [ -f detector/detect_comets.py ]; then
-            python detector/detect_comets.py \
-              --hours 48 \
-              --step-min 60 \
-              --out detections || true
-          else
-            echo "detect_comets.py not found, skipping detection"
-          fi
-
-      - name: Ensure status JSON exists
-        run: |
-          if [ ! -f detections/latest_status.json ]; then
-            echo "Creating fallback status file"
-            echo "{" > detections/latest_status.json
-            echo "  \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"," >> detections/latest_status.json
-            echo "  \"status\": \"no detector output\"" >> detections/latest_status.json
-            echo "}" >> detections/latest_status.json
-          fi
-
-      - name: List detection outputs
-        run: |
-          echo "Detection files:"
-          find detections -type f -name "*.json" || true
-
-      - name: Commit and push results
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add detections/*.json || true
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "🤖 SOHO comet scan $(date -u +"%Y-%m-%d %H:%M UTC")"
-            git push
-          fi
-
-      - name: Upload artifacts
+      - name: Upload detector logs as artifact (optional, for debugging)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: soho-detections
-          path: detections/
-          retention-days: 7
+          name: detector-logs
+          path: |
+            detector.log
+            ensure.log
+
+      - name: Update reports manifest
+        run: |
+          set -euo pipefail
+          cd detections
+          shopt -s nullglob
+          latest=$(ls -t candidates_*.json 2>/dev/null | head -n1 || true)
+          if [[ -z "${latest:-}" ]]; then
+            echo "No candidates_*.json found; skipping reports.json update."
+            exit 0
+          fi
+          printf '%s\n' candidates_*.json \
+            | jq -R . \
+            | jq -s --arg latest "$latest" '{latest:$latest, reports:.}' > reports.json
+
+      - name: Commit and push new detections
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+          git add detections
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore(detections): update latest_status + candidates + assets"
+            git push
+          fi
