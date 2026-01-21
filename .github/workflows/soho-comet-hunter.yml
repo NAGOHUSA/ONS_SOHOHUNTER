@@ -11,6 +11,7 @@ permissions:
 jobs:
   soho:
     runs-on: ubuntu-latest
+    timeout-minutes: 30    # Added timeout to prevent hanging
 
     steps:
       - name: Checkout repository
@@ -24,24 +25,41 @@ jobs:
           python-version: "3.11"
           cache: 'pip'
 
-      - name: Upgrade pip + install dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsm6 libxext6
+
+      - name: Upgrade pip + install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install numpy opencv-python-headless requests
+          # Also check for requirements.txt if it exists
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          fi
 
       - name: Create output directories
         run: |
-          mkdir -p frames detections detections/reports
+          mkdir -p frames/C2 frames/C3 detections detections/reports detections/crops detections/animations
 
-      - name: Fetch latest 24h LASCO images
-        run: python fetch_lasco.py --hours 24
+      - name: Fetch latest LASCO images (24h window)
+        run: |
+          echo "Fetching LASCO images..."
+          python detector/fetch_lasco.py --hours 24
+          echo "Frames directory contents:"
+          ls -la frames/C2/ 2>/dev/null | head -5
+          ls -la frames/C3/ 2>/dev/null | head -5
 
       - name: Run comet detection (24h window)
         run: |
-          python detect_comets.py \
+          echo "Running comet detection..."
+          python detector/detect_comets.py \
             --hours 24 \
             --step-min 12 \
             --out detections
+          echo "Detections directory contents:"
+          ls -la detections/ 2>/dev/null || echo "No detections directory"
 
       # ───────────────────────────────────────────────
       # Always create/update candidates_latest.json
@@ -49,54 +67,122 @@ jobs:
       - name: Update candidates_latest.json
         run: |
           python - <<'END'
-          import json
+          import json, os
           from pathlib import Path
+          import glob
 
           out_dir = Path("detections")
           latest_file = out_dir / "candidates_latest.json"
-
-          candidates_files = sorted(
-              out_dir.glob("candidates_*.json"),
-              reverse=True
-          )
-
-          if not candidates_files:
+          
+          # Create detections directory if it doesn't exist
+          out_dir.mkdir(exist_ok=True)
+          
+          # Find all candidate JSON files
+          candidate_patterns = [
+              "candidates_*.json",
+              "reports/candidates_*.json"
+          ]
+          
+          all_candidate_files = []
+          for pattern in candidate_patterns:
+              all_candidate_files.extend(out_dir.glob(pattern))
+          
+          if not all_candidate_files:
+              print("No candidate files found → writing empty list")
               latest_file.write_text("[]\n", encoding="utf-8")
-              print("No candidate files found → wrote empty list")
-              exit()
-
-          # take the newest one
-          newest = candidates_files[0]
+              exit(0)
+          
+          # Sort by modification time (newest first)
+          all_candidate_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+          newest = all_candidate_files[0]
           print(f"Using newest file: {newest}")
-
-          data = json.loads(newest.read_text(encoding="utf-8"))
-
-          # normalize - get candidates list
-          if isinstance(data, dict) and "candidates" in data:
-              candidates = data["candidates"]
-          elif isinstance(data, list):
-              candidates = data
-          else:
-              candidates = []
-
-          latest_file.write_text(
-              json.dumps(candidates, indent=2, ensure_ascii=False),
-              encoding="utf-8"
-          )
-          print("Updated candidates_latest.json")
+          
+          try:
+              data = json.loads(newest.read_text(encoding="utf-8"))
+              
+              # normalize - get candidates list
+              if isinstance(data, dict) and "candidates" in data:
+                  candidates = data["candidates"]
+              elif isinstance(data, list):
+                  candidates = data
+              else:
+                  print(f"Unexpected JSON structure in {newest}")
+                  candidates = []
+              
+              # Write the latest file
+              latest_file.write_text(
+                  json.dumps(candidates, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+              print(f"Updated candidates_latest.json with {len(candidates)} candidates")
+              
+          except Exception as e:
+              print(f"Error processing {newest}: {e}")
+              # Write empty array as fallback
+              latest_file.write_text("[]\n", encoding="utf-8")
           END
 
-      - name: Commit and push new detections (if any)
+      - name: List generated files
         run: |
+          echo "=== Detections directory ==="
+          find detections -type f -name "*.json" | head -10
+          echo "=== Frames directory ==="
+          find frames -type f -name "*.jpg" | head -5
+
+      # Clean up old frames to save space (keep last 48 hours)
+      - name: Clean old frames
+        run: |
+          find frames -name "*.jpg" -type f -mtime +2 -delete 2>/dev/null || true
+          echo "Cleaned frames older than 2 days"
+
+      - name: Commit and push new detections (if any)
+        env:
+          # Make sure git push works with the token
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -A detections/ frames/  2>/dev/null || true
-
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
+          
+          # Add only detection files (not frames)
+          git add detections/
+          
+          # Check if there are changes
+          if git diff --cached --quiet; then
+            echo "No changes in detections to commit"
           else
-            git commit -m "Auto: SOHO detection update $(date -u +'%Y-%m-%d %H:%M UTC')" || true
-            git push
-            echo "Changes committed & pushed"
+            echo "Changes detected, committing..."
+            git commit -m "🤖 Auto: SOHO comet detection update $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "Commit failed (maybe no changes)"
+            
+            # Push with retry
+            for i in 1 2 3; do
+              echo "Attempt $i to push changes..."
+              if git push; then
+                echo "Changes pushed successfully"
+                break
+              else
+                echo "Push failed, retrying in 5 seconds..."
+                sleep 5
+                # Pull latest changes before retrying
+                git pull --rebase || echo "Pull failed, continuing..."
+              fi
+            done
           fi
+
+      # Optional: Upload artifacts for debugging
+      - name: Upload detection artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: detection-results
+          path: |
+            detections/
+            detector.log
+          retention-days: 7
+
+      # Optional: Send notification on failure
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "⚠️ SOHO Comet Hunter workflow failed!"
+          echo "Check the logs for details."
