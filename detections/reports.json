@@ -1,1 +1,7 @@
-{"latest": "candidates_latest.json", "reports": ["candidates_latest.json"]}
+{
+  "latest": "candidates_latest.json",
+  "reports": [
+    "candidates_20260121_201836.json",
+    "candidates_latest.json"
+  ]
+}
