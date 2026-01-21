@@ -2,162 +2,38 @@ name: SOHO Comet Hunter
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '30 */2 * * *'
 
 permissions:
   contents: write
 
 jobs:
-  detect:
+  run:
+    name: Manual Run Verification
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+      - name: Show environment
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg libsm6 libxext6 wget curl
-          python -m pip install --upgrade pip
-          pip install numpy opencv-python-headless requests imageio imageio-ffmpeg
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Branch: $GITHUB_REF_NAME"
+          echo "Triggered manually via workflow_dispatch"
+          date -u
 
-      - name: Create directories
+      - name: Create test output
         run: |
-          mkdir -p frames/C2 frames/C3
-          mkdir -p detections detections/crops detections/annotated detections/originals detections/gifs detections/mp4
+          mkdir -p detections
+          echo "{ \"status\": \"ok\", \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" }" > detections/test.json
+          cat detections/test.json
 
-      - name: Download LASCO images
-        run: |
-          for i in 0 1 2 3 4 5; do
-            TS=$(date -u -d "$i hour ago" +"%Y%m%d_%H%M")
-            wget -q -O "frames/C2/${TS}_c2.jpg" \
-              "https://soho.nascom.nasa.gov/data/realtime/c2/1024/latest.jpg" || true
-            wget -q -O "frames/C3/${TS}_c3.jpg" \
-              "https://soho.nascom.nasa.gov/data/realtime/c3/1024/latest.jpg" || true
-            sleep 1
-          done
-
-      - name: Ensure test images exist
-        run: |
-          C2_COUNT=$(ls frames/C2/*.jpg 2>/dev/null | wc -l || echo 0)
-          C3_COUNT=$(ls frames/C3/*.jpg 2>/dev/null | wc -l || echo 0)
-
-          if [ "$C2_COUNT" -lt 2 ] && [ "$C3_COUNT" -lt 2 ]; then
-            cat > /tmp/create_test_images.py << 'EOF'
-import cv2
-import numpy as np
-import os
-from datetime import datetime, timedelta
-
-for cam in ["C2", "C3"]:
-    os.makedirs(f"frames/{cam}", exist_ok=True)
-    now = datetime.utcnow()
-    for i in range(3):
-        ts = (now - timedelta(hours=i)).strftime("%Y%m%d_%H%M")
-        img = np.random.randint(40, 90, (1024, 1024), dtype=np.uint8)
-        cv2.circle(img, (512, 512), 14 + i * 2, 255, -1)
-        cv2.imwrite(f"frames/{cam}/{ts}_{cam.lower()}.jpg", img)
-
-print("Synthetic test images created")
-EOF
-            python /tmp/create_test_images.py
-          fi
-
-      - name: Run comet detection (if present)
-        run: |
-          if [ -f detector/detect_comets.py ]; then
-            python detector/detect_comets.py \
-              --hours 48 \
-              --step-min 60 \
-              --max-images 12 \
-              --out detections || true
-          else
-            echo "Detection script not found, skipping."
-          fi
-
-      - name: Generate fallback candidate data
-        run: |
-          cat > /tmp/generate_candidates.py << 'EOF'
-import json, random, datetime
-from pathlib import Path
-
-Path("detections").mkdir(exist_ok=True)
-now = datetime.datetime.utcnow()
-candidates = []
-
-for i in range(1, 6):
-    det = random.choice(["C2", "C3"])
-    ts = now - datetime.timedelta(hours=i)
-    candidates.append({
-        "id": f"{det}_{i}",
-        "detector": det,
-        "track_index": i,
-        "positions": [{
-            "frame": f"{ts.strftime('%Y%m%d_%H%M')}_{det.lower()}.jpg",
-            "time_utc": ts.isoformat() + "Z",
-            "x": 400 + i * 8,
-            "y": 400 + i * 5
-        }],
-        "ai_label": random.choice(["comet", "not_comet"]),
-        "ai_score": round(random.uniform(0.2, 0.9), 2),
-        "timestamp": ts.isoformat() + "Z"
-    })
-
-with open("detections/candidates_latest.json", "w") as f:
-    json.dump(candidates, f, indent=2)
-
-with open("detections/latest_status.json", "w") as f:
-    json.dump({
-        "timestamp": now.isoformat() + "Z",
-        "total_candidates": len(candidates),
-        "c2_candidates": sum(c["detector"] == "C2" for c in candidates),
-        "c3_candidates": sum(c["detector"] == "C3" for c in candidates),
-        "comet_candidates": sum(c["ai_label"] == "comet" for c in candidates),
-        "ai_threshold": 0.4,
-        "note": "Auto-generated fallback data"
-    }, f, indent=2)
-
-print("Candidate data generated")
-EOF
-          python /tmp/generate_candidates.py
-
-      - name: List generated files
-        run: |
-          echo "Generated JSON files:"
-          find detections -name "*.json" -type f -exec ls -lh {} \;
-
-      - name: Commit and push results
+      - name: Commit test output
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add -f detections/*.json || true
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Auto: SOHO detection $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
-          fi
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: detection-results
-          path: |
-            detections/
-            frames/
-          retention-days: 3
+          git add detections/test.json
+          git commit -m "Manual workflow run test" || echo "No changes"
+          git push || echo "Push skipped"
