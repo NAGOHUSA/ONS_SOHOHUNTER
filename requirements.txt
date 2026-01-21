@@ -1,5 +1,8 @@
-numpy>=1.21.0
-opencv-python-headless>=4.5.0
-requests>=2.25.0
-imageio>=2.9.0
-imageio-ffmpeg>=0.4.5
+opencv-python-headless
+numpy
+requests
+pillow
+filterpy
+scipy
+imageio
+imageio-ffmpeg
