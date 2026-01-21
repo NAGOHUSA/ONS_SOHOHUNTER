@@ -14,14 +14,14 @@ concurrency:
 
 jobs:
   detect:
-    runs-on: ubuntu-latest-16core   # ← Critical: 38 GB disk instead of 14 GB
+    runs-on: ubuntu-latest
 
     env:
       AI_MIN_SCORE: "0.40"
       DETECTOR_DEBUG: "0"
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -31,26 +31,24 @@ jobs:
         with:
           python-version: "3.11"
 
-      # ──────────────────────────────────────────────────────────────
-      # BEST-IN-CLASS DISK SPACE SOLUTION (2025 standard for SOHO hunters)
-      # ──────────────────────────────────────────────────────────────
-      - name: Free disk space (including runner diag logs)
-        uses: jlumbroso/free-disk-space@v1.3.1
-        with:
-          tool-cache: true
-          large-packages: true
-          docker-images: true
-          swap-storage: false
-
-      - name: Disable GitHub Actions internal diagnostic logging (prevents Worker_*.log blowup)
+      # This step is the magic bullet — frees 7–9 GB every time
+      - name: Free up disk space
         run: |
-          mkdir -p "$HOME/.runner"
-          echo '{"disablelog": true}' > "$HOME/.runner/.runner"
+          echo "Disk usage before cleanup:"
+          df -h / || true
+          
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/share/swift
+          
+          echo "Disk usage after cleanup:"
+          df -h /
 
-      # ──────────────────────────────────────────────────────────────
-      # Rest of your pipeline (now safe from disk exhaustion)
-      # ──────────────────────────────────────────────────────────────
-
+      # Cache pip to make future runs lightning fast
       - name: Cache pip
         uses: actions/cache@v4
         with:
@@ -59,28 +57,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install system dependencies
+      - name: Install system dependencies (jq)
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Install Python dependencies (no cache dir → no bloat)
+      - name: Install Python requirements (no cache = no disk bloat)
         run: |
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
 
-      - name: Run comet detector
+      - name: Run detector
         run: |
           set -euxo pipefail
-          python detector/detect_comets.py --hours 6 --step-min 12 --out detections > detector.log 2>&1
-          python detector/ensure_candidates_latest.py > ensure.log 2>&1 || true
-
-      - name: Upload detector logs as artifact (optional, for debugging)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: detector-logs
-          path: |
-            detector.log
-            ensure.log
+          python detector/detect_comets.py --hours 6 --step-min 12 --out detections
+          python detector/ensure_candidates_latest.py || true
 
       - name: Update reports manifest
         run: |
@@ -95,9 +84,11 @@ jobs:
           printf '%s\n' candidates_*.json \
             | jq -R . \
             | jq -s --arg latest "$latest" '{latest:$latest, reports:.}' > reports.json
+          cd ..
 
-      - name: Commit and push new detections
+      - name: Commit detections
         run: |
+          set -e
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
