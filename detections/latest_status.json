@@ -1,8 +1,8 @@
 {
-  "timestamp_utc": "2026-01-21T08:58:13Z",
+  "timestamp_utc": "2026-01-21T09:57:34Z",
   "hours_back": 24,
   "step_min": 12,
-  "runtime_seconds": 0.000198,
+  "runtime_seconds": 0.000199,
   "detectors": {
     "C2": {
       "frames": 0,
@@ -16,5 +16,5 @@
   "fetched_new_frames": 0,
   "candidates_count": 0,
   "comet_candidates": 0,
-  "generated_at": "2026-01-21T08:58:13Z"
+  "generated_at": "2026-01-21T09:57:34Z"
 }
