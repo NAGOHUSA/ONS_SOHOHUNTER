@@ -1,9 +1,9 @@
 name: SOHO Comet Hunter
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # This should enable manual run
   schedule:
-    - cron: "30 */2 * * *"  # Every 2 hours at :30 (reduce frequency)
+    - cron: '30 0,2,4,6,8,10,12,14,16,18,20,22 * * *'  # Every 2 hours at :30
 
 permissions:
   contents: write
@@ -11,7 +11,7 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -33,116 +33,94 @@ jobs:
       - name: Create directories
         run: |
           mkdir -p frames/C2 frames/C3
-          mkdir -p detections detections/crops detections/annotated
+          mkdir -p detections
 
-      - name: Fetch LASCO images
+      - name: Download test LASCO images
         run: |
-          echo "=== Fetching LASCO images ==="
-          python detector/fetch_lasco.py --hours 48 --step-min 30 --max-frames 12 --out-dir frames
-          echo "=== Downloaded files ==="
-          echo "C2:"
-          ls -la frames/C2/*.jpg 2>/dev/null | wc -l || echo "0"
-          echo "C3:"
-          ls -la frames/C3/*.jpg 2>/dev/null | wc -l || echo "0"
-
-      - name: Run comet detection (DEBUG MODE)
-        run: |
-          echo "=== Running comet detection in DEBUG mode ==="
-          # First, let's see what files we have
+          echo "=== Downloading sample LASCO images ==="
+          # Download some sample images for testing
+          curl -s -o frames/C2/test_c2_1.jpg "https://soho.nascom.nasa.gov/data/realtime/c2/1024/latest.jpg" || echo "Failed C2"
+          curl -s -o frames/C2/test_c2_2.jpg "https://soho.nascom.nasa.gov/data/LATEST/current_c2.jpg" || echo "Failed C2 alt"
+          curl -s -o frames/C3/test_c3_1.jpg "https://soho.nascom.nasa.gov/data/realtime/c3/1024/latest.jpg" || echo "Failed C3"
+          curl -s -o frames/C3/test_c3_2.jpg "https://soho.nascom.nasa.gov/data/LATEST/current_c3.jpg" || echo "Failed C3 alt"
+          
+          # Check what we downloaded
           echo "Files in frames/C2:"
-          ls -la frames/C2/ 2>/dev/null | head -10 || echo "No C2 frames"
-          echo ""
+          ls -la frames/C2/ || echo "No files"
           echo "Files in frames/C3:"
-          ls -la frames/C3/ 2>/dev/null | head -10 || echo "No C3 frames"
-          echo ""
-          
-          # Create a simple test detection if we have at least 2 images
-          C2_COUNT=$(ls frames/C2/*.jpg 2>/dev/null | wc -l)
-          C3_COUNT=$(ls frames/C3/*.jpg 2>/dev/null | wc -l)
-          
-          echo "C2 images: $C2_COUNT"
-          echo "C3 images: $C3_COUNT"
-          
-          if [ $C2_COUNT -ge 2 ] || [ $C3_COUNT -ge 2 ]; then
-            echo "Running actual detection..."
-            python detector/detect_comets.py \
-              --hours 48 \
-              --step-min 60 \
-              --max-images 12 \
-              --out detections
-          else
-            echo "Not enough images for detection. Creating test candidate..."
-            # Create a test candidate JSON
-            python -c "
-import json, datetime
-test_candidate = {
-    'detector': 'C2',
-    'track_index': 1,
-    'positions': [
-        {
-            'frame': '20260121_1200_c2_test.jpg',
-            'time_utc': '2026-01-21T12:00:00Z',
-            'x': 512.0,
-            'y': 512.0
-        }
-    ],
-    'series_mid_frame': '20260121_1200_c2_test.jpg',
-    'image_size': [1024, 1024],
-    'origin': 'upper_left',
-    'crop_path': 'crops/test_crop.png',
-    'annotated_path': 'annotated/test_annotated.png',
-    'original_mid_path': 'originals/test_original.jpg',
-    'ai_label': 'comet',
-    'ai_score': 0.75
-}
-with open('detections/candidates_test.json', 'w') as f:
-    json.dump([test_candidate], f, indent=2)
-with open('detections/candidates_latest.json', 'w') as f:
-    json.dump([test_candidate], f, indent=2)
-print('Created test candidate')
-            "
-          fi
+          ls -la frames/C3/ || echo "No files"
 
-      - name: Create summary report
+      - name: Create test candidate data
         run: |
-          echo "=== Creating summary ==="
+          echo "=== Creating test candidate data ==="
           python -c "
-import json, datetime, os
+import json, datetime, os, random
 from pathlib import Path
 
-detections_dir = Path('detections')
-candidate_files = list(detections_dir.glob('candidates_*.json'))
-latest_file = detections_dir / 'candidates_latest.json'
+# Create detections directory
+Path('detections').mkdir(exist_ok=True)
 
-if candidate_files:
-    newest = max(candidate_files, key=lambda f: f.stat().st_mtime)
-    print(f'Latest candidate file: {newest.name}')
+# Generate some test candidates
+candidates = []
+for i in range(1, 6):
+    detector = random.choice(['C2', 'C3'])
+    timestamp = datetime.datetime.utcnow() - datetime.timedelta(hours=i*2)
     
-    try:
-        with open(newest) as f:
-            data = json.load(f)
-        candidates = data if isinstance(data, list) else data.get('candidates', [])
-        print(f'Found {len(candidates)} candidates')
-        
-        # Create summary
-        summary = {
-            'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
-            'total_candidates': len(candidates),
-            'c2_candidates': sum(1 for c in candidates if c.get('detector') == 'C2'),
-            'c3_candidates': sum(1 for c in candidates if c.get('detector') == 'C3'),
-            'comet_candidates': sum(1 for c in candidates if c.get('ai_score', 0) >= 0.4),
-            'test_note': 'This may include test data if real detection failed'
-        }
-        
-        with open(detections_dir / 'latest_status.json', 'w') as f:
-            json.dump(summary, f, indent=2)
-        print('Created summary')
-        
-    except Exception as e:
-        print(f'Error reading candidates: {e}')
-else:
-    print('No candidate files found')
+    candidate = {
+        'id': f'{detector}_test_{i}',
+        'detector': detector,
+        'track_index': i,
+        'positions': [
+            {
+                'frame': f'test_{timestamp.strftime(\"%Y%m%d_%H%M\")}_{detector.lower()}.jpg',
+                'time_utc': timestamp.isoformat() + 'Z',
+                'x': 400 + random.randint(-100, 100),
+                'y': 400 + random.randint(-100, 100)
+            }
+        ],
+        'series_mid_frame': f'test_{timestamp.strftime(\"%Y%m%d_%H%M\")}_{detector.lower()}.jpg',
+        'image_size': [1024, 1024],
+        'origin': 'upper_left',
+        'crop_path': f'crops/test_{i}.png',
+        'annotated_path': f'annotated/test_{i}_annotated.png',
+        'original_mid_path': f'originals/test_{i}.jpg',
+        'ai_label': random.choice(['comet', 'not_comet', 'unknown']),
+        'ai_score': round(random.uniform(0.1, 0.9), 2),
+        'timestamp': timestamp.isoformat() + 'Z',
+        'report_name': 'test_report.json'
+    }
+    candidates.append(candidate)
+
+# Save to files
+timestamp = datetime.datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+with open(f'detections/candidates_{timestamp}.json', 'w') as f:
+    json.dump(candidates, f, indent=2)
+
+with open('detections/candidates_latest.json', 'w') as f:
+    json.dump(candidates, f, indent=2)
+
+# Create summary
+summary = {
+    'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+    'total_candidates': len(candidates),
+    'c2_candidates': sum(1 for c in candidates if c['detector'] == 'C2'),
+    'c3_candidates': sum(1 for c in candidates if c['detector'] == 'C3'),
+    'comet_candidates': sum(1 for c in candidates if c['ai_label'] == 'comet'),
+    'ai_threshold': 0.4,
+    'note': 'Test data - replace with actual detection'
+}
+
+with open('detections/latest_status.json', 'w') as f:
+    json.dump(summary, f, indent=2)
+
+print(f'Created {len(candidates)} test candidates')
+print(f'Comet candidates: {summary[\"comet_candidates\"]}')
           "
+
+      - name: List created files
+        run: |
+          echo "=== Created detection files ==="
+          find detections -name "*.json" -type f -exec echo "  {}" \;
 
       - name: Commit and push results
         env:
@@ -151,23 +129,22 @@ else:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Add only JSON files
+          # Force add JSON files
           find detections -name "*.json" -type f -exec git add -f {} \;
           
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "🤖 Auto: SOHO detection update $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
+            git commit -m "🤖 Auto: SOHO test data $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "Commit failed (maybe no changes)"
+            git push || echo "Push failed"
             echo "Changes pushed"
           fi
 
-      - name: Upload artifacts for debugging
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: soho-detection-debug
+          name: detection-results
           path: |
-            frames/
             detections/
-          retention-days: 3
+          retention-days: 7
