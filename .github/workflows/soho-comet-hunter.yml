@@ -11,13 +11,13 @@ permissions:
 jobs:
   soho:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 30    # Added timeout to prevent hanging
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0     # important when you want to commit back
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -28,21 +28,31 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libsm6 libxext6
+          sudo apt-get install -y ffmpeg libsm6 libxext6 imagemagick
 
       - name: Upgrade pip + install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy opencv-python-headless requests
+          pip install numpy opencv-python-headless requests imageio imageio-ffmpeg
+          # Also check for requirements.txt if it exists
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          fi
 
       - name: Create output directories
         run: |
-          mkdir -p frames/C2 frames/C3 detections detections/reports
+          mkdir -p frames/C2 frames/C3 detections detections/reports detections/crops detections/annotated detections/originals detections/gifs detections/mp4
 
-      - name: Fetch latest LASCO images (24h window)
+      - name: Fetch latest LASCO images (24h window) - UPDATED
         run: |
-          echo "Fetching LASCO images..."
-          python detector/fetch_lasco.py --hours 24
+          echo "Fetching LASCO images from NASA SOHO..."
+          python detector/fetch_lasco.py --hours 24 --step-min 12 --max-frames 24
+          echo "=== Frames directory contents ==="
+          echo "C2 frames:"
+          ls -la frames/C2/ 2>/dev/null | head -10 || echo "No C2 frames found"
+          echo ""
+          echo "C3 frames:"
+          ls -la frames/C3/ 2>/dev/null | head -10 || echo "No C3 frames found"
 
       - name: Run comet detection (24h window)
         run: |
@@ -50,47 +60,80 @@ jobs:
           python detector/detect_comets.py \
             --hours 24 \
             --step-min 12 \
+            --max-images 24 \
             --out detections
+          echo "=== Detection results ==="
+          ls -la detections/ 2>/dev/null || echo "No detections directory"
+          find detections -name "*.json" -type f 2>/dev/null | head -5
 
+      # ───────────────────────────────────────────────
+      # Always create/update candidates_latest.json
+      # ───────────────────────────────────────────────
       - name: Update candidates_latest.json
         run: |
           python - <<'END'
-          import json
+          import json, os
           from pathlib import Path
+          import glob
 
           out_dir = Path("detections")
           latest_file = out_dir / "candidates_latest.json"
-
-          candidates_files = sorted(
-              out_dir.glob("candidates_*.json"),
-              reverse=True
-          )
-
-          if not candidates_files:
+          
+          # Create detections directory if it doesn't exist
+          out_dir.mkdir(exist_ok=True)
+          
+          # Find all candidate JSON files
+          candidate_patterns = [
+              "candidates_*.json",
+              "reports/candidates_*.json"
+          ]
+          
+          all_candidate_files = []
+          for pattern in candidate_patterns:
+              all_candidate_files.extend(out_dir.glob(pattern))
+          
+          if not all_candidate_files:
+              print("No candidate files found → writing empty list")
               latest_file.write_text("[]\n", encoding="utf-8")
-              print("No candidate files found → wrote empty list")
-              exit()
-
-          newest = candidates_files[0]
+              exit(0)
+          
+          # Sort by modification time (newest first)
+          all_candidate_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+          newest = all_candidate_files[0]
           print(f"Using newest file: {newest}")
-
-          data = json.loads(newest.read_text(encoding="utf-8"))
-
-          if isinstance(data, dict) and "candidates" in data:
-              candidates = data["candidates"]
-          elif isinstance(data, list):
-              candidates = data
-          else:
-              candidates = []
-
-          latest_file.write_text(
-              json.dumps(candidates, indent=2, ensure_ascii=False),
-              encoding="utf-8"
-          )
-          print("Updated candidates_latest.json")
+          
+          try:
+              data = json.loads(newest.read_text(encoding="utf-8"))
+              
+              # normalize - get candidates list
+              if isinstance(data, dict) and "candidates" in data:
+                  candidates = data["candidates"]
+              elif isinstance(data, list):
+                  candidates = data
+              else:
+                  print(f"Unexpected JSON structure in {newest}")
+                  candidates = []
+              
+              # Write the latest file
+              latest_file.write_text(
+                  json.dumps(candidates, indent=2, ensure_ascii=False),
+                  encoding="utf-8"
+              )
+              print(f"Updated candidates_latest.json with {len(candidates)} candidates")
+              
+          except Exception as e:
+              print(f"Error processing {newest}: {e}")
+              # Write empty array as fallback
+              latest_file.write_text("[]\n", encoding="utf-8")
           END
 
-      - name: Commit and push new detections (if any)
+      - name: Clean old frames to save space (keep last 48 hours)
+        run: |
+          echo "Cleaning old frames..."
+          find frames -name "*.jpg" -type f -mtime +2 -delete 2>/dev/null || true
+          echo "Cleaned frames older than 2 days"
+
+      - name: Commit and push new detections
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -98,8 +141,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Force add JSON files in detections (ignore .gitignore)
-          find detections -name "*.json" -type f -exec git add -f {} \;
+          # Add JSON files in detections folder
+          find detections -name "*.json" -type f -exec git add -f {} \; 2>/dev/null || true
           
           # Check if there are changes
           if git diff --cached --quiet; then
@@ -117,26 +160,30 @@ jobs:
               else
                 echo "Push failed, retrying in 5 seconds..."
                 sleep 5
+                # Pull latest changes before retrying
                 git pull --rebase || echo "Pull failed, continuing..."
               fi
             done
           fi
 
-      - name: Clean old frames
-        run: |
-          find frames -name "*.jpg" -type f -mtime +2 -delete 2>/dev/null || true
-          echo "Cleaned frames older than 2 days"
-
+      # Upload artifacts for debugging
       - name: Upload detection artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: detection-results
-          path: detections/
+          path: |
+            detections/
+            detector.log
           retention-days: 7
 
+      # Optional: Send notification on failure
       - name: Notify on failure
         if: failure()
         run: |
           echo "⚠️ SOHO Comet Hunter workflow failed!"
           echo "Check the logs for details."
+          echo "Common issues:"
+          echo "1. Network connectivity to NASA servers"
+          echo "2. Python dependency issues"
+          echo "3. GitHub API rate limits"
