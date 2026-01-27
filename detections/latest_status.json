@@ -1,13 +1,13 @@
 {
-  "timestamp_utc": "2026-01-27T08:27:02Z",
+  "timestamp_utc": "2026-01-27T12:35:47Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {
     "C2": {
       "frames": 30,
-      "tracks": 29,
-      "last_frame_name": "C2_20260127_0136_c2_1024.jpg",
-      "last_frame_iso": "2026-01-27T01:36:00Z",
+      "tracks": 35,
+      "last_frame_name": "C2_20260127_0436_c2_1024.jpg",
+      "last_frame_iso": "2026-01-27T04:36:00Z",
       "last_frame_size": [
         1024,
         1024
@@ -15,9 +15,9 @@
     },
     "C3": {
       "frames": 30,
-      "tracks": 915,
-      "last_frame_name": "C3_20260127_0130_c3_1024.jpg",
-      "last_frame_iso": "2026-01-27T01:30:00Z",
+      "tracks": 973,
+      "last_frame_name": "C3_20260127_0442_c3_1024.jpg",
+      "last_frame_iso": "2026-01-27T04:42:00Z",
       "last_frame_size": [
         1024,
         1024
@@ -26,8 +26,8 @@
   },
   "fetched_new_frames": 60,
   "errors": [],
-  "auto_selected_count": 509,
-  "candidates_in_report": 944,
+  "auto_selected_count": 498,
+  "candidates_in_report": 1008,
   "name": "latest_status.json",
-  "generated_at": "2026-01-27T08:27:02Z"
+  "generated_at": "2026-01-27T12:35:47Z"
 }
