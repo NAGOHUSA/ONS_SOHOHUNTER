@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-06-12T00:51:25Z",
+  "timestamp_utc": "2026-06-12T05:47:28Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {
@@ -29,5 +29,5 @@
   "auto_selected_count": 0,
   "candidates_in_report": 0,
   "name": "latest_status.json",
-  "generated_at": "2026-06-12T00:51:25Z"
+  "generated_at": "2026-06-12T05:47:28Z"
 }
