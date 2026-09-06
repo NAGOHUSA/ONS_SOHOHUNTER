@@ -1,5 +1,5 @@
 {
-  "timestamp_utc": "2026-09-06T18:01:39Z",
+  "timestamp_utc": "2026-09-06T21:58:50Z",
   "hours_back": 6,
   "step_min": 12,
   "detectors": {
@@ -26,8 +26,8 @@
   },
   "fetched_new_frames": 60,
   "errors": [],
-  "auto_selected_count": 918,
+  "auto_selected_count": 1053,
   "candidates_in_report": 1643,
   "name": "latest_status.json",
-  "generated_at": "2026-09-06T18:01:39Z"
+  "generated_at": "2026-09-06T21:58:50Z"
 }
