@@ -22,12 +22,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 1   # history isn't needed; a full clone is ~16 GB
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -50,7 +50,7 @@ jobs:
 
       # Cache pip to make future runs lightning fast
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
@@ -70,6 +70,11 @@ jobs:
           set -euxo pipefail
           python detector/detect_comets.py --hours 6 --step-min 12 --out detections
           python detector/ensure_candidates_latest.py || true
+
+      - name: Prune old detections
+        env:
+          KEEP_DAYS: "30"
+        run: python scripts/prune_detections.py
 
       - name: Update reports manifest
         run: |
@@ -93,7 +98,7 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-          git add detections
+          git add -A detections
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
