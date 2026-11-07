@@ -1,9 +1,6 @@
 {
   "latest": "candidates_latest.json",
   "reports": [
-    "candidates_20261007_033446.json",
-    "candidates_20261007_105023.json",
-    "candidates_20261007_201402.json",
     "candidates_20261008_000521.json",
     "candidates_20261008_040603.json",
     "candidates_20261008_111428.json",
@@ -124,6 +121,7 @@
     "candidates_20261106_185020.json",
     "candidates_20261106_233650.json",
     "candidates_20261106_235619.json",
+    "candidates_20261107_035423.json",
     "candidates_latest.json"
   ]
 }
